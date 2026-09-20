@@ -1,5 +1,5 @@
 # NyteOS
-An Operating System made from scratch using Assembly and C.
+An lightweight Operating System made from scratch using Assembly and C. (beta/experimental)
 
 # Installation
 ## Linux
