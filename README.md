@@ -1,6 +1,9 @@
 # NyteOS
 An lightweight Operating System made from scratch using Assembly and C. (beta/experimental)
 
+# Screenshots
+![screenshot](screenshots/screenshot1)
+
 # Installation
 ## Linux
 ```curl -fsSL https://raw.githubusercontent.com/batata123muitoboa-dot/NyteOS/main/install.sh | bash```
