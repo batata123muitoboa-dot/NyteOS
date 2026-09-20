@@ -3,6 +3,7 @@ An lightweight Operating System made from scratch using Assembly and C. (beta/ex
 
 # Screenshots
 ![screenshot](screenshots/screenshot1)
+![another-screenshot](screenshots/screenshot2)
 
 # Installation
 ## Linux
