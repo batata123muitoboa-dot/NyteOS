@@ -1,5 +1,5 @@
 # NyteOS
-An lightweight Operating System made from scratch using Assembly and C. (beta/experimental)
+A lightweight Operating System made from scratch using Assembly and C. (beta/experimental)
 
 ## Screenshots
 ![screenshot](screenshots/screenshot1)
@@ -20,9 +20,13 @@ An lightweight Operating System made from scratch using Assembly and C. (beta/ex
 - GPU: Intel GMA X4500 or better
 - Storage: 2 MB
 
+### Architecture
+- x86 (32-bit)
+
 ## Installation
 ### Linux
-```curl -fsSL https://raw.githubusercontent.com/batata123muitoboa-dot/NyteOS/main/install.sh | bash```
+```bash
+curl -fsSL https://raw.githubusercontent.com/batata123muitoboa-dot/NyteOS/main/install.sh | bash```
 
 ### Windows (cmd)
 ```curl -fsSL https://raw.githubusercontent.com/batata123muitoboa-dot/NyteOS/main/install.bat | cmd```
