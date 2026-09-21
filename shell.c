@@ -3318,12 +3318,11 @@ static void draw_files(void)
         WHITE
     );
 
-    fill_rect(
+    draw_bmp_icon(
         win->x + 10,
-        win->y + 50,
-        48,
-        36,
-        YELLOW
+        win->y + 46,
+        "files.bmp",
+        48
     );
 
     draw_string(
