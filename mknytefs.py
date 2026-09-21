@@ -6,10 +6,10 @@ import struct
 SECTOR_SIZE = 512
 IMAGE_SIZE = 1024 * 512
 
-FS_START = 74
-ENTRY_START = 75
-BITMAP_SECTOR = 91
-DATA_START = 92
+FS_START = 80
+ENTRY_START = 81
+BITMAP_SECTOR = 97
+DATA_START = 98
 
 MAX_ENTRIES = 128
 ENTRY_SIZE = 64
@@ -106,6 +106,15 @@ def main():
 
     if os.path.exists("nyteos.bmp"):
         files.append(("nyteos.bmp", 0))
+
+    if os.path.exists("settings.bmp"):
+        files.append(("settings.bmp", 0))
+
+    if os.path.exists("dwallpaper.bmp"):
+        files.append(("dwallpaper.bmp", 0))
+
+    if os.path.exists("wallpaper2.bmp"):
+        files.append(("wallpaper2.bmp", 0))
 
     # --------------------------------------------------------
     # Allocate files

@@ -4,6 +4,7 @@
 #include <stddef.h>
 #include "rtc.h"
 #include "pit.h"
+#include "heap.h"
 
 extern void keyboard_stub(void);
 
@@ -1981,6 +1982,7 @@ extern void shell_ui(void);
 
 void kernel_main(void)
 {
+    init_heap();
     kb_head = 0;
     kb_tail = 0;
     init_stack_tracker();

@@ -980,55 +980,23 @@ static void draw_mouse_cursor(void)
  * WALLPAPER
  * ============================================================ */
 
+static void draw_bmp_icon(
+    int x,
+    int y,
+    const char *name,
+    int size
+);
+
+static const char *selected_wallpaper = "dwallpaper.bmp";
+
 static void draw_wallpaper(void)
 {
 
-    for (int y = 0; y < HEIGHT; y++) {
-
-        uint32_t r =
-            0x10 + ((uint32_t)y * 0x0A / HEIGHT);
-
-        uint32_t g =
-            0x20 + ((uint32_t)y * 0x0D / HEIGHT);
-
-        uint32_t b =
-            0x30 + ((uint32_t)y * 0x12 / HEIGHT);
-
-        uint32_t color =
-            (r << 16) |
-            (g << 8) |
-            b;
-
-        hline(
-            0,
-            y,
-            WIDTH,
-            color
-        );
-    }
-
-    fill_rect(
-        WIDTH - 260,
-        70,
-        180,
-        180,
-        0x001A3448
-    );
-
-    fill_rect(
-        WIDTH - 220,
-        110,
-        180,
-        180,
-        0x00172C3D
-    );
-
-    fill_rect(
-        WIDTH - 180,
-        150,
-        180,
-        180,
-        0x00142636
+    draw_bmp_icon(
+        0,
+        0,
+        selected_wallpaper,
+        -3
     );
 }
 
@@ -1149,10 +1117,10 @@ static int load_icon_bmp(
 #define FS_ENTRY_SIZE 64
 #define FS_MAX_ENTRIES 128
 
-#define FS_START_SECTOR  74
-#define FS_ENTRY_SECTOR  75
-#define FS_BITMAP_SECTOR 91
-#define FS_DATA_SECTOR   92
+#define FS_START_SECTOR  80
+#define FS_ENTRY_SECTOR  81
+#define FS_BITMAP_SECTOR 97
+#define FS_DATA_SECTOR   98
 
 static unsigned char bmp_buffer[4096];
 
@@ -1225,9 +1193,6 @@ static void draw_bmp_icon(
     if (!found)
         return;
 
-    /*
-     * Carrega os 3 setores do BMP.
-     */
     for (unsigned int i = 0; i < 3; i++)
     {
         if (!ata_read_sector(
@@ -1239,9 +1204,6 @@ static void draw_bmp_icon(
             bmp_buffer[i * 512 + j] = fs_sector[j];
     }
 
-    /*
-     * Verifica BMP.
-     */
     if (bmp_buffer[0] != 'B' ||
         bmp_buffer[1] != 'M')
         return;
@@ -1264,11 +1226,11 @@ static void draw_bmp_icon(
     unsigned int colors_used =
         bmp_u32(&bmp_buffer[46]);
 
-    if (width != 16 ||
-        height == 0 ||
-        bpp != 8 ||
-        compression != 0)
-        return;
+    //if (width != 16 ||
+        //height == 0 ||
+        //bpp != 8 ||
+        //compression != 0)
+        //return;
 
     unsigned int palette_count =
         colors_used;
@@ -1292,21 +1254,70 @@ static void draw_bmp_icon(
         bottom_up = 0;
     }
 
-    /*
-     * Calcula o tamanho de cada pixel
-     * na tela.
-     *
-     * BMP = 16x16
-     *
-     * size 16 -> 1x1
-     * size 32 -> 2x2
-     * size 48 -> 3x3
-     * size 64 -> 4x4
-     */
-    int scale = size / width;
+    int draw_width;
+    int draw_height;
+    int scale_x;
+    int scale_y;
 
-    if (scale < 1)
-        scale = 1;
+if (size == -2)
+    {
+        draw_width = 800;
+        draw_height = 600;
+
+        scale_x = draw_width / width;
+        scale_y = draw_height / height;
+
+        if (scale_x < 1) scale_x = 1;
+        if (scale_y < 1) scale_y = 1;
+    }
+    else if (size == -1)
+    {
+        int sx = 800 / width;
+        int sy = 600 / height;
+
+        int scale = sx < sy ? sx : sy;
+
+        if (scale < 1) scale = 1;
+
+        draw_width = width * scale;
+        draw_height = height * scale;
+
+        x = (800 - draw_width) / 2;
+        y = (600 - draw_height) / 2;
+
+        scale_x = scale;
+        scale_y = scale;
+    }
+    else if (size == -3)
+    {
+        if ((800 * height) > (600 * width))
+        {
+            draw_width = 800;
+            draw_height = (height * 800) / width;
+        }
+        else
+        {
+            draw_height = 600;
+            draw_width = (width * 600) / height;
+        }
+
+        x = (800 - draw_width) / 2;
+        y = (600 - draw_height) / 2;
+    }
+    else
+    {
+        if (size <= 0)
+            return;
+
+        draw_width = size;
+        draw_height = size;
+
+        scale_x = draw_width / width;
+        scale_y = draw_height / height;
+
+        if (scale_x < 1) scale_x = 1;
+        if (scale_y < 1) scale_y = 1;
+    }
 
     for (int py = 0; py < height; py++)
     {
@@ -1337,9 +1348,6 @@ static void draw_bmp_icon(
             unsigned int r =
                 bmp_buffer[palette_pos + 2];
 
-            /*
-             * Preto = transparente.
-             */
             if (r == 0 &&
                 g == 0 &&
                 b == 0)
@@ -1350,11 +1358,32 @@ static void draw_bmp_icon(
                 (g << 8) |
                 b;
 
+            int dx;
+            int dy;
+            int dw;
+            int dh;
+
+            if (size == -2 || size == -3)
+            {
+                dx = x + (px * draw_width) / width;
+                dy = y + (py * draw_height) / height;
+
+                dw = ((px + 1) * draw_width) / width - dx + x;
+                dh = ((py + 1) * draw_height) / height - dy + y;
+            }
+            else
+            {
+                dx = x + px * scale_x;
+                dy = y + py * scale_y;
+                dw = scale_x;
+                dh = scale_y;
+            }
+
             fill_rect(
-                x + px * scale,
-                y + py * scale,
-                scale,
-                scale,
+                dx,
+                dy,
+                dw,
+                dh,
                 color
             );
         }
@@ -1365,9 +1394,10 @@ static void draw_bmp_icon(
  * JANELAS
  * ============================================================ */
 
-#define WINDOW_FILES 0
-#define WINDOW_TERM  1
-#define WINDOW_COUNT 2
+#define WINDOW_FILES     0
+#define WINDOW_TERM      1
+#define WINDOW_SETTINGS  2
+#define WINDOW_COUNT     3
 
 typedef struct {
     int x;
@@ -1413,12 +1443,23 @@ static Window windows[WINDOW_COUNT] = {
         0, 0,
         0, 0,
         0, 0, 0, 0
+    },
+
+    {
+        180, 120,
+        440, 330,
+        "Settings",
+        0, 0, 0,
+        0, 0,
+        0, 0,
+        0, 0, 0, 0
     }
 };
 
 static int window_z[WINDOW_COUNT] = {
     WINDOW_FILES,
-    WINDOW_TERM
+    WINDOW_TERM,
+    WINDOW_SETTINGS
 };
 
 static int active_window = -1;
@@ -3088,52 +3129,118 @@ static int window_at(int x, int y)
 static void window_minimize(int index);
 static void window_toggle_maximize(int index);
 static int taskbar_window_at(int x, int y);
+static void draw_taskbar(void);
+static void desktop_draw(void);
+
+#define SETTINGS_MAIN       0
+#define SETTINGS_DESKTOP    1
+#define SETTINGS_ABOUT      2
+
+static int settings_page = SETTINGS_MAIN;
 
 static void window_manager_mouse_down(void)
 {
 
     int task = taskbar_window_at(mouse_x, mouse_y);
 
-if (task >= 0) {
-    windows[task].minimized = 0;
-    window_raise(task);
-    return;
-}
+    if (task >= 0) {
+        windows[task].minimized = 0;
+        window_raise(task);
+        return;
+    }
 
     int index = window_at(mouse_x, mouse_y);
 
     if (index >= 0) {
 
-        Window *win = &windows[index];
+            Window *win = &windows[index];
 
-        window_raise(index);
+            window_raise(index);
 
-        if (point_in_close_button(
-                win,
-                mouse_x,
-                mouse_y)) {
+            if (point_in_close_button(
+                    win,
+                    mouse_x,
+                    mouse_y)) {
 
-            window_close(index);
-            return;
+                window_close(index);
+                return;
+            }
+
+    if (point_in_minimize_button(
+        win,
+        mouse_x,
+        mouse_y)) {
+
+        window_minimize(index);
+        return;
+    }
+
+    if (point_in_maximize_button(
+            win,
+            mouse_x,
+            mouse_y)) {
+
+        window_toggle_maximize(index);
+        return;
+    }
+
+    if (index == WINDOW_SETTINGS)
+        {
+            if (settings_page == SETTINGS_MAIN)
+            {
+                if (mouse_x >= win->x + 10 && mouse_x < win->x + 220 &&
+                    mouse_y >= win->y + 130 && mouse_y < win->y + 155)
+                {
+                    settings_page = SETTINGS_DESKTOP;
+                    desktop_draw();
+                    return;
+                }
+
+                if (mouse_x >= win->x + 10 && mouse_x < win->x + 220 &&
+                    mouse_y >= win->y + 185 && mouse_y < win->y + 210)
+                {
+                    settings_page = SETTINGS_ABOUT;
+                    desktop_draw();
+                    return;
+                }
+            }
+            else if (settings_page == SETTINGS_DESKTOP)
+            {
+                if (mouse_x >= win->x + 20 && mouse_x < win->x + 220 &&
+                    mouse_y >= win->y + 85 && mouse_y < win->y + 185)
+                {
+                    selected_wallpaper = "dwallpaper.bmp";
+                    desktop_draw();
+                    return;
+                }
+
+                if (mouse_x >= win->x + 20 && mouse_x < win->x + 220 &&
+                    mouse_y >= win->y + 205 && mouse_y < win->y + 285)
+                {
+                    selected_wallpaper = "wallpaper2.bmp";
+                    desktop_draw();
+                    return;
+                }
+
+                if (mouse_x >= win->x + 10 && mouse_x < win->x + 120 &&
+                    mouse_y >= win->y + 287 && mouse_y < win->y + 340)
+                {
+                    settings_page = SETTINGS_MAIN;
+                    desktop_draw();
+                    return;
+                }
+            }
+            else if (settings_page == SETTINGS_ABOUT)
+            {
+                if (mouse_x >= win->x + 10 && mouse_x < win->x + 120 &&
+                    mouse_y >= win->y + 275 && mouse_y < win->y + 325)
+                {
+                    settings_page = SETTINGS_MAIN;
+                    desktop_draw();
+                    return;
+                }
+            }
         }
-
-        if (point_in_minimize_button(
-        win,
-        mouse_x,
-        mouse_y)) {
-
-    window_minimize(index);
-    return;
-}
-
-if (point_in_maximize_button(
-        win,
-        mouse_x,
-        mouse_y)) {
-
-    window_toggle_maximize(index);
-    return;
-}
 
         if (point_in_titlebar(
                 win,
@@ -3173,10 +3280,17 @@ if (point_in_maximize_button(
         window_open(WINDOW_TERM);
         return;
     }
-}
 
-static void draw_taskbar(void);
-static void desktop_draw(void);
+    if (
+        mouse_x >= 120 &&
+        mouse_x < 168 &&
+        mouse_y >= 40 &&
+        mouse_y < 88)
+    {
+        window_open(WINDOW_SETTINGS);
+        return;
+    }
+}
 
 static void window_minimize(int index)
 {
@@ -3340,6 +3454,184 @@ static void draw_files(void)
     );
 }
 
+/* ============================================================
+ * SETTINGS
+ * ============================================================ */
+
+static void draw_settings(void)
+{
+    Window *win = &windows[WINDOW_SETTINGS];
+
+    if (!win->open)
+        return;
+
+    draw_window(
+        win->x,
+        win->y,
+        win->w,
+        win->h,
+        win->title,
+        win->active
+    );
+
+    if (settings_page == SETTINGS_MAIN)
+    {
+        draw_bmp_icon(
+            win->x + 20,
+            win->y + 46,
+            "settings.bmp",
+            32
+        );
+
+        draw_string(
+            win->x + 22,
+            win->y + 94,
+            "Settings",
+            WHITE
+        );
+
+        draw_string(
+            win->x + 20,
+            win->y + 135,
+            "Desktop",
+            WHITE
+        );
+
+        draw_string(
+            win->x + 20,
+            win->y + 155,
+            "Appearance",
+            WHITE
+        );
+
+        draw_string(
+            win->x + 20,
+            win->y + 175,
+            "System",
+            WHITE
+        );
+
+        draw_string(
+            win->x + 20,
+            win->y + 195,
+            "About NyteOS",
+            WHITE
+        );
+    }
+
+    if (settings_page == SETTINGS_DESKTOP)
+{
+    draw_string(
+        win->x + 20,
+        win->y + 50,
+        "Desktop",
+        WHITE
+    );
+
+    draw_bmp_icon(
+        win->x + 20,
+        win->y + 85,
+        "dwallpaper.bmp",
+        100
+    );
+
+    draw_string(
+        win->x + 140,
+        win->y + 120,
+        "Default",
+        WHITE
+    );
+
+    draw_bmp_icon(
+        win->x + 20,
+        win->y + 205,
+        "wallpaper2.bmp",
+        100
+    );
+
+    draw_string(
+        win->x + 140,
+        win->y + 240,
+        "Wallpaper 2",
+        WHITE
+    );
+
+    draw_string(
+        win->x + 20,
+        win->y + 285,
+        "< Back",
+        CYAN
+    );
+
+    return;
+}
+
+    if (settings_page == SETTINGS_ABOUT)
+    {
+        draw_bmp_icon(
+            win->x + 20,
+            win->y + 46,
+            "nyteos.bmp",
+            32
+        );
+
+        draw_string(
+            win->x + 22,
+            win->y + 94,
+            "NyteOS",
+            WHITE
+        );
+
+        draw_string(
+            win->x + 20,
+            win->y + 130,
+            "A lightweight operating system",
+            GRAY
+        );
+
+        draw_string(
+            win->x + 20,
+            win->y + 150,
+            "made from scratch.",
+            GRAY
+        );
+
+        draw_string(
+            win->x + 20,
+            win->y + 185,
+            "Version 0.2",
+            WHITE
+        );
+
+        draw_string(
+            win->x + 20,
+            win->y + 205,
+            "x86 / 32-bit",
+            WHITE
+        );
+
+        draw_string(
+            win->x + 20,
+            win->y + 225,
+            "NyteFS",
+            CYAN
+        );
+
+        draw_string(
+            win->x + 20,
+            win->y + 245,
+            "Built with C and Assembly",
+            GRAY
+        );
+
+        draw_string(
+            win->x + 20,
+            win->y + 285,
+            "< Back",
+            CYAN
+        );
+    }
+}
 
 /* ============================================================
  * RELÓGIO RTC
@@ -3486,6 +3778,21 @@ static void desktop_draw(void)
         WHITE
     );
 
+    draw_bmp_icon(
+        120,
+        40,
+        "settings.bmp",
+        48
+    );
+
+    draw_centered(
+        100,
+        95,
+        88,
+        "SETTINGS",
+        WHITE
+    );
+
 for (int z = 0; z < WINDOW_COUNT; z++)
 {
     int i = window_z[z];
@@ -3501,7 +3808,10 @@ for (int z = 0; z < WINDOW_COUNT; z++)
 
     if (i == WINDOW_TERM)
         draw_terminal();
-}
+
+    if (i == WINDOW_SETTINGS)
+        draw_settings();
+    }
 
     draw_taskbar();
 }
