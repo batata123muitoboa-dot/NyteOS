@@ -44,9 +44,15 @@ gcc -m32 -ffreestanding -fno-pie -fno-stack-protector -c pit.c -o pit.o
 
 if errorlevel 1 exit /b 1
 
+echo [+] Compiling Heap...
+
+gcc -m32 -ffreestanding -fno-pie -fno-stack-protector -c heap.c -o heap.o
+
+if errorlevel 1 exit /b 1
+
 echo [+] Linking kernel ^& modules...
 
-ld -m elf_i386 -T kernel.ld entry.o kernel.o shell.o keyboard_stub.o rtc.o pit.o -o kernel.elf
+ld -m elf_i386 -T kernel.ld entry.o kernel.o heap.o shell.o keyboard_stub.o rtc.o pit.o -o kernel.elf
 
 if errorlevel 1 exit /b 1
 
