@@ -1,10 +1,6 @@
 #include <stdint.h>
 #include "rtc.h"
 
-/* ============================================================
- * NYTEOS SHELL UI - VBE FRAMEBUFFER
- * ============================================================ */
-
 #define BOOT_INFO_ADDR 0x8800
 
 /* ------------------------------------------------------------
@@ -80,7 +76,7 @@ void fs_list_term(unsigned int dir_idx) {
  * BACKGROUND BUFFER
  * ============================================================ */
 
-static uint32_t desktop_buffer[800 * 600];
+uint32_t *desktop_buffer = (uint32_t *)0x100000;
 
 static void __attribute__((unused)) save_desktop_buffer(void)
 {
@@ -1082,6 +1078,288 @@ static void draw_icon(
     );
 }
 
+#define ICON_BMP_MAX_SIZE 4096
+
+static unsigned char icon_bmp[ICON_BMP_MAX_SIZE];
+extern unsigned int current_dir;
+
+extern int fs_write_entry(int index, struct fs_entry *entry);
+extern int fs_find(const char *name, unsigned int parent);
+extern int fs_find_free_entry(void);
+extern unsigned int fs_find_free_data_sector(void);
+
+extern unsigned char fs_sector[512];
+extern unsigned char fs_bitmap[512];
+
+extern int ata_read_sector(unsigned int sector, unsigned char *buffer);
+extern int ata_write_sector(unsigned int sector, unsigned char *buffer);
+
+static int load_icon_bmp(
+    const char *name
+)
+{
+    int idx = fs_find(name, 0);
+
+    if (idx == -1)
+        return 0;
+
+    struct fs_entry entry;
+
+    if (!fs_read_entry(idx, &entry))
+        return 0;
+
+    if (entry.type == FS_DIR)
+        return 0;
+
+    if (entry.size == 0)
+        return 0;
+
+    if (entry.size > ICON_BMP_MAX_SIZE)
+        return 0;
+
+    unsigned int sectors =
+        (entry.size + 511) / 512;
+
+    for (unsigned int i = 0; i < sectors; i++)
+    {
+        if (!ata_read_sector(
+                entry.start_sector + i,
+                fs_sector))
+        {
+            return 0;
+        }
+
+        unsigned int remaining =
+            entry.size - i * 512;
+
+        unsigned int copy_size =
+            remaining > 512 ? 512 : remaining;
+
+        for (unsigned int j = 0; j < copy_size; j++)
+        {
+            icon_bmp[i * 512 + j] =
+                fs_sector[j];
+        }
+    }
+
+    return 1;
+}
+
+#define FS_SECTOR_SIZE 512
+#define FS_ENTRY_SIZE 64
+#define FS_MAX_ENTRIES 128
+
+#define FS_START_SECTOR  74
+#define FS_ENTRY_SECTOR  75
+#define FS_BITMAP_SECTOR 91
+#define FS_DATA_SECTOR   92
+
+static unsigned char bmp_buffer[4096];
+
+static unsigned int bmp_u16(const unsigned char *p)
+{
+    return (unsigned int)p[0] |
+           ((unsigned int)p[1] << 8);
+}
+
+static unsigned int bmp_u32(const unsigned char *p)
+{
+    return (unsigned int)p[0] |
+           ((unsigned int)p[1] << 8) |
+           ((unsigned int)p[2] << 16) |
+           ((unsigned int)p[3] << 24);
+}
+
+static void draw_bmp_icon(
+    int x,
+    int y,
+    const char *name,
+    int size
+)
+{
+    unsigned char entry_sector[512];
+
+    unsigned int start_sector = 0;
+    int found = 0;
+
+    for (unsigned int s = 0; s < 16 && !found; s++)
+    {
+        if (!ata_read_sector(
+                FS_ENTRY_SECTOR + s,
+                entry_sector))
+            return;
+
+        for (unsigned int e = 0; e < 8; e++)
+        {
+            unsigned int off = e * 64;
+
+            int same = 1;
+
+            for (unsigned int i = 0; i < 32; i++)
+            {
+                if (entry_sector[off + i] !=
+                    (unsigned char)name[i])
+                {
+                    same = 0;
+                    break;
+                }
+
+                if (name[i] == '\0')
+                    break;
+            }
+
+            if (!same)
+                continue;
+
+            start_sector =
+                (unsigned int)entry_sector[off + 36] |
+                ((unsigned int)entry_sector[off + 37] << 8) |
+                ((unsigned int)entry_sector[off + 38] << 16) |
+                ((unsigned int)entry_sector[off + 39] << 24);
+
+            found = 1;
+            break;
+        }
+    }
+
+    if (!found)
+        return;
+
+    /*
+     * Carrega os 3 setores do BMP.
+     */
+    for (unsigned int i = 0; i < 3; i++)
+    {
+        if (!ata_read_sector(
+                start_sector + i,
+                fs_sector))
+            return;
+
+        for (unsigned int j = 0; j < 512; j++)
+            bmp_buffer[i * 512 + j] = fs_sector[j];
+    }
+
+    /*
+     * Verifica BMP.
+     */
+    if (bmp_buffer[0] != 'B' ||
+        bmp_buffer[1] != 'M')
+        return;
+
+    unsigned int pixel_offset =
+        bmp_u32(&bmp_buffer[10]);
+
+    int width =
+        (int)bmp_u32(&bmp_buffer[18]);
+
+    int height =
+        (int)bmp_u32(&bmp_buffer[22]);
+
+    unsigned int bpp =
+        bmp_u16(&bmp_buffer[28]);
+
+    unsigned int compression =
+        bmp_u32(&bmp_buffer[30]);
+
+    unsigned int colors_used =
+        bmp_u32(&bmp_buffer[46]);
+
+    if (width != 16 ||
+        height == 0 ||
+        bpp != 8 ||
+        compression != 0)
+        return;
+
+    unsigned int palette_count =
+        colors_used;
+
+    if (palette_count == 0)
+        palette_count = 256;
+
+    if (palette_count > 256)
+        return;
+
+    unsigned int palette_offset = 54;
+
+    unsigned int row_size =
+        ((unsigned int)width + 3) & ~3u;
+
+    int bottom_up = 1;
+
+    if (height < 0)
+    {
+        height = -height;
+        bottom_up = 0;
+    }
+
+    /*
+     * Calcula o tamanho de cada pixel
+     * na tela.
+     *
+     * BMP = 16x16
+     *
+     * size 16 -> 1x1
+     * size 32 -> 2x2
+     * size 48 -> 3x3
+     * size 64 -> 4x4
+     */
+    int scale = size / width;
+
+    if (scale < 1)
+        scale = 1;
+
+    for (int py = 0; py < height; py++)
+    {
+        int bmp_y =
+            bottom_up ? height - 1 - py : py;
+
+        unsigned int row =
+            pixel_offset +
+            (unsigned int)bmp_y * row_size;
+
+        for (int px = 0; px < width; px++)
+        {
+            unsigned int index =
+                bmp_buffer[row + px];
+
+            if (index >= palette_count)
+                continue;
+
+            unsigned int palette_pos =
+                palette_offset + index * 4;
+
+            unsigned int b =
+                bmp_buffer[palette_pos];
+
+            unsigned int g =
+                bmp_buffer[palette_pos + 1];
+
+            unsigned int r =
+                bmp_buffer[palette_pos + 2];
+
+            /*
+             * Preto = transparente.
+             */
+            if (r == 0 &&
+                g == 0 &&
+                b == 0)
+                continue;
+
+            unsigned int color =
+                (r << 16) |
+                (g << 8) |
+                b;
+
+            fill_rect(
+                x + px * scale,
+                y + py * scale,
+                scale,
+                scale,
+                color
+            );
+        }
+    }
+}
 
 /* ============================================================
  * JANELAS
@@ -1256,28 +1534,6 @@ static void draw_window(
 
 #define FS_FILE 1
 #define FS_DIR  2
-
-#define FS_SECTOR_SIZE 512
-#define FS_ENTRY_SIZE 64
-#define FS_MAX_ENTRIES 128
-
-extern unsigned int current_dir;
-
-extern int fs_write_entry(int index, struct fs_entry *entry);
-extern int fs_find(const char *name, unsigned int parent);
-extern int fs_find_free_entry(void);
-extern unsigned int fs_find_free_data_sector(void);
-
-extern int ata_read_sector(unsigned int sector, unsigned char *buffer);
-extern int ata_write_sector(unsigned int sector, unsigned char *buffer);
-
-extern unsigned char fs_sector[512];
-extern unsigned char fs_bitmap[512];
-
-#define FS_START_SECTOR 18
-#define FS_ENTRY_SECTOR 19
-#define FS_BITMAP_SECTOR 35
-#define FS_DATA_SECTOR 36
 
 extern volatile char key_buffer[128];
 
@@ -2113,15 +2369,17 @@ static void shell_cmd_status(void)
  * GETCHAR
  * ============================================================ */
 
-static char term_getchar(void)
+static inline char term_getchar(void)
 {
     if (kb_head == kb_tail)
         return 0;
 
     char c = key_buffer[kb_tail];
 
-    kb_tail =
-        (kb_tail + 1) % 128;
+    kb_tail++;
+
+    if (kb_tail >= 128)
+        kb_tail = 0;
 
     return c;
 }
@@ -2261,7 +2519,7 @@ static void term_execute_command(
 
     else if (term_strcmp(command, "about") == 0)
     {
-        shell_print("NyteOS v0.1", WHITE);
+        shell_print("NyteOS v0.2", WHITE);
         shell_print(
             "32-bit Operating System.",
             WHITE
@@ -2275,7 +2533,7 @@ static void term_execute_command(
     else if (term_strcmp(command, "version") == 0)
     {
         shell_print(
-            "NyteOS v0.1",
+            "NyteOS v0.2",
             WHITE
         );
     }
@@ -3138,37 +3396,21 @@ static void draw_taskbar(void)
         TASKBAR_BORDER
     );
 
-    fill_rect(
+    draw_bmp_icon(
         8,
         y + 7,
-        76,
-        28,
-        DARK_BLUE
-    );
-
-    rect(
-        8,
-        y + 7,
-        76,
-        28,
-        BLUE
-    );
-
-    draw_string(
-        20,
-        y + 17,
-        "NYTE",
-        WHITE
+        "nyteos.bmp",
+        32
     );
 
     vline(
-        96,
+        50,
         y + 7,
         28,
         TASKBAR_BORDER
     );
 
-    int task_x = 104;
+    int task_x = 60;
 
     for (int i = 0; i < WINDOW_COUNT; i++)
     {
@@ -3215,18 +3457,34 @@ static void desktop_draw(void)
 {
     draw_wallpaper();
 
-    draw_icon(
+    draw_bmp_icon(
         30,
         40,
-        "FILES",
-        YELLOW
+        "files.bmp",
+        48
     );
 
-    draw_icon(
+    draw_centered(
+        10,
+        95,
+        88,
+        "FILES",
+        WHITE
+    );
+
+    draw_bmp_icon(
         30,
         130,
+        "term.bmp",
+        48
+    );
+
+    draw_centered(
+        10,
+        185,
+        88,
         "TERM",
-        GREEN
+        WHITE
     );
 
 for (int z = 0; z < WINDOW_COUNT; z++)
@@ -3264,6 +3522,35 @@ static void __attribute__((unused)) desktop_update(void)
  * SHELL UI
  * ============================================================ */
 
+static void shell_process_key(char key)
+{
+    if (key == '\n')
+    {
+        term_cmd_buffer[0] = '\0';
+        term_cmd_len = 0;
+        return;
+    }
+
+    if (key == '\b')
+    {
+        if (term_cmd_len > 0)
+        {
+            term_cmd_len--;
+            term_cmd_buffer[term_cmd_len] = '\0';
+        }
+        return;
+    }
+
+    if (term_cmd_len < sizeof(term_cmd_buffer) - 1)
+    {
+        term_cmd_buffer[term_cmd_len++] = key;
+        term_cmd_buffer[term_cmd_len] = '\0';
+    }
+}
+
+extern volatile char pending_key;
+extern volatile int key_pending;
+
 void shell_ui(void)
 {
     framebuffer_init();
@@ -3297,39 +3584,13 @@ void shell_ui(void)
 
     while (1) {
 
-        if (windows[WINDOW_TERM].open) {
-            char key = term_getchar();
-            if (key != 0) {
-                window_raise(WINDOW_TERM);
-                
-                if (key == '\n') {
-                    term_execute_command(term_cmd_buffer);
-                    term_cmd_len = 0;
-                    term_cmd_buffer[0] = '\0';
-                } else if (key == '\b') {
-                    if (term_cmd_len > 0) {
-                        term_cmd_len--;
-                        term_cmd_buffer[term_cmd_len] = '\0';
-                    }
-                } else if (key >= 32 && key <= 126) {
-                    if (term_cmd_len < 50) {
-                        term_cmd_buffer[term_cmd_len++] = key;
-                        term_cmd_buffer[term_cmd_len] = '\0';
-                    }
-                }
+if (key_pending)
+{
+    char key = pending_key;
+    key_pending = 0;
 
-                int curr_x = mouse_x, curr_y = mouse_y;
-                mouse_x = old_x; mouse_y = old_y;
-                restore_cursor_background();
-                mouse_x = curr_x; mouse_y = curr_y;
-
-                desktop_draw();
-
-                save_cursor_background();
-                draw_mouse_cursor();
-            }
-        }
-
+    shell_process_key(key);
+}
         mouse_poll();
 
         rtc_time_t rtc_now;

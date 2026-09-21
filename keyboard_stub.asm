@@ -1,9 +1,11 @@
 [bits 32]
+
 [extern keyboard_handler_main]
 [global keyboard_stub]
 
 keyboard_stub:
-    pushad
+    pusha
+
     push ds
     push es
     push fs
@@ -12,6 +14,8 @@ keyboard_stub:
     mov ax, 0x10
     mov ds, ax
     mov es, ax
+    mov fs, ax
+    mov gs, ax
 
     call keyboard_handler_main
 
@@ -19,6 +23,6 @@ keyboard_stub:
     pop fs
     pop es
     pop ds
-    popad
 
+    popa
     iretd

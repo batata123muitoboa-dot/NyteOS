@@ -1,8 +1,9 @@
-// kernel.c - NyteOS + NyteFS
+// kernel
 
 #include <stdint.h>
 #include <stddef.h>
 #include "rtc.h"
+#include "pit.h"
 
 extern void keyboard_stub(void);
 
@@ -12,6 +13,8 @@ extern void keyboard_stub(void);
 volatile uint32_t framebuffer;
 volatile uint32_t framebuffer_pitch;
 volatile uint32_t framebuffer_bpp;
+
+uint32_t fs_base_lba = 0;
 
 #define FS_START_SECTOR 18
 #define FS_ENTRY_SECTOR 19
@@ -222,74 +225,39 @@ void pic_remap(void) {
     outb(0xA1, 0xFF);
 }
 
+volatile char pending_key = 0;
+volatile int key_pending = 0;
+
 void keyboard_handler_main(void)
 {
     unsigned char scancode = inb(0x60);
 
-    outb(0x20, 0x20);
-
-    static int shift_pressed = 0;
-    static int caps_lock = 0;
-
-    if (scancode == 0x2A)
-    {
-        shift_pressed = 1;
-        return;
-    }
-
-    if (scancode == 0x36)
-    {
-        shift_pressed = 1;
-        return;
-    }
-
-    if (scancode == 0xAA)
-    {
-        shift_pressed = 0;
-        return;
-    }
-
-    if (scancode == 0xB6)
-    {
-        shift_pressed = 0;
-        return;
-    }
-
-    if (scancode == 0x3A)
-    {
-        caps_lock = !caps_lock;
-        return;
-    }
-
     if (scancode & 0x80)
+    {
+        outb(0x20, 0x20);
         return;
+    }
 
     static const char keymap[128] = {
-        0,  27, '1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '-', '=', '\b',
+        0, 27, '1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '-', '=', '\b',
         '\t', 'q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p', '[', ']', '\n',
         0, 'a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l', ';', '\'', '`',
         0, '\\', 'z', 'x', 'c', 'v', 'b', 'n', 'm', ',', '.', '/', 0,
         '*', 0, ' '
     };
 
-    char c = keymap[scancode];
-
-    if (!c)
-        return;
-
-    if (c >= 'a' && c <= 'z')
+    if (scancode < 128)
     {
-        if (shift_pressed ^ caps_lock)
-            c = c - 'a' + 'A';
+        char c = keymap[scancode];
+
+        if (c)
+        {
+            pending_key = c;
+            key_pending = 1;
+        }
     }
 
-    int next = (kb_head + 1) % 128;
-
-    if (next != kb_tail)
-    {
-        key_buffer[kb_head] = c;
-        kb_head = next;
-    }
+    outb(0x20, 0x20);
 }
 
 void default_interrupt_handler(void) {
@@ -318,42 +286,84 @@ void init_idt(void) {
    ATA PIO
    ============================================================ */
 
-int ata_wait(void)
+#define ATA_PRIMARY 0x1F0
+#define ATA_SECONDARY 0x170
+
+#define ATA_READ  0x20
+#define ATA_WRITE 0x30
+#define ATA_IDENTIFY 0xEC
+
+#define ATA_BSY 0x80
+#define ATA_DRQ 0x08
+#define ATA_ERR 0x01
+
+static uint16_t ata_io = ATA_PRIMARY;
+static uint8_t current_drive = 0xE0;
+
+static inline void io_wait(void)
 {
-    while (inb(ATA_STATUS) & ATA_BSY)
-        ;
-
-    if (inb(ATA_STATUS) & ATA_ERR)
-        return 0;
-
-    return 1;
+    for (int i = 0; i < 16; i++)
+        inb(0x80);
 }
 
+static void ata_select(uint16_t io, uint8_t drive)
+{
+    ata_io = io;
+    current_drive = drive;
+
+    outb(ata_io + 6, drive);
+    io_wait();
+}
+
+static int ata_wait_bsy(void)
+{
+    for (int i = 0; i < 100000; i++)
+    {
+        uint8_t status = inb(ata_io + 7);
+
+        if (!(status & ATA_BSY))
+            return 1;
+    }
+
+    return 0;
+}
+
+static int ata_wait_drq(void)
+{
+    for (int i = 0; i < 100000; i++)
+    {
+        uint8_t status = inb(ata_io + 7);
+
+        if (status & ATA_ERR)
+            return 0;
+
+        if (!(status & ATA_BSY) && (status & ATA_DRQ))
+            return 1;
+    }
+
+    return 0;
+}
 
 int ata_read_sector(unsigned int lba, unsigned char *buffer)
 {
-    outb(ATA_DRIVE, 0xE0 | ((lba >> 24) & 0x0F));
-    outb(ATA_SECTOR_CNT, 1);
+    ata_select(ata_io, current_drive);
 
-    outb(ATA_LBA_LOW,  lba & 0xFF);
-    outb(ATA_LBA_MID,  (lba >> 8) & 0xFF);
-    outb(ATA_LBA_HIGH, (lba >> 16) & 0xFF);
-
-    outb(ATA_COMMAND, ATA_READ);
-
-    if (!ata_wait())
+    if (!ata_wait_bsy())
         return 0;
 
-    while (!(inb(ATA_STATUS) & ATA_DRQ))
-    {
-        if (inb(ATA_STATUS) & ATA_ERR)
-            return 0;
-    }
+    outb(ata_io + 6, current_drive | ((lba >> 24) & 0x0F));
+    outb(ata_io + 2, 1);
+    outb(ata_io + 3, lba & 0xFF);
+    outb(ata_io + 4, (lba >> 8) & 0xFF);
+    outb(ata_io + 5, (lba >> 16) & 0xFF);
+    outb(ata_io + 7, ATA_READ);
+
+    if (!ata_wait_drq())
+        return 0;
 
     for (int i = 0; i < 256; i++)
     {
-        unsigned short value = inw(ATA_DATA);
-
+        uint16_t value = inw(ata_io);
         buffer[i * 2] = value & 0xFF;
         buffer[i * 2 + 1] = value >> 8;
     }
@@ -361,41 +371,95 @@ int ata_read_sector(unsigned int lba, unsigned char *buffer)
     return 1;
 }
 
-
 int ata_write_sector(unsigned int lba, unsigned char *buffer)
 {
-    outb(ATA_DRIVE, 0xE0 | ((lba >> 24) & 0x0F));
-    outb(ATA_SECTOR_CNT, 1);
+    ata_select(ata_io, current_drive);
 
-    outb(ATA_LBA_LOW,  lba & 0xFF);
-    outb(ATA_LBA_MID,  (lba >> 8) & 0xFF);
-    outb(ATA_LBA_HIGH, (lba >> 16) & 0xFF);
-
-    outb(ATA_COMMAND, ATA_WRITE);
-
-    if (!ata_wait())
+    if (!ata_wait_bsy())
         return 0;
 
-    while (!(inb(ATA_STATUS) & ATA_DRQ))
-    {
-        if (inb(ATA_STATUS) & ATA_ERR)
-            return 0;
-    }
+    outb(ata_io + 6, current_drive | ((lba >> 24) & 0x0F));
+    outb(ata_io + 2, 1);
+    outb(ata_io + 3, lba & 0xFF);
+    outb(ata_io + 4, (lba >> 8) & 0xFF);
+    outb(ata_io + 5, (lba >> 16) & 0xFF);
+    outb(ata_io + 7, ATA_WRITE);
+
+    if (!ata_wait_drq())
+        return 0;
 
     for (int i = 0; i < 256; i++)
     {
-        unsigned short value =
+        uint16_t value =
             buffer[i * 2] |
-            ((unsigned short)buffer[i * 2 + 1] << 8);
+            ((uint16_t)buffer[i * 2 + 1] << 8);
 
-        outw(ATA_DATA, value);
+        outw(ata_io, value);
     }
 
-    ata_wait();
+    io_wait();
 
-    return 1;
+    return ata_wait_bsy();
 }
 
+void print_number(int n);
+
+unsigned int ata_get_drive_size_mb(uint16_t io, uint8_t drive)
+{
+    uint16_t identify[256];
+
+    outb(io + 6, drive);
+    io_wait();
+
+    uint8_t status = inb(io + 7);
+
+    if (status == 0 || status == 0xFF)
+        return 0;
+
+    outb(io + 2, 0);
+    outb(io + 3, 0);
+    outb(io + 4, 0);
+    outb(io + 5, 0);
+    outb(io + 7, ATA_IDENTIFY);
+
+    for (int i = 0; i < 100000; i++)
+    {
+        status = inb(io + 7);
+
+        if (status & ATA_ERR)
+            return 0;
+
+        if (!(status & ATA_BSY))
+            break;
+    }
+
+    if (status & ATA_BSY)
+        return 0;
+
+    uint8_t mid = inb(io + 4);
+    uint8_t high = inb(io + 5);
+
+    if (mid != 0 || high != 0)
+        return 0;
+
+    if (!(status & ATA_DRQ))
+        return 0;
+
+    for (int i = 0; i < 256; i++)
+        identify[i] = inw(io);
+
+    uint32_t sectors =
+        ((uint32_t)identify[61] << 16) |
+        identify[60];
+
+    if (sectors == 0)
+        return 0;
+
+    return (unsigned int)(
+        ((uint64_t)sectors * 512ULL) /
+        (1024ULL * 1024ULL)
+    );
+}
 
 /* ============================================================
    NyteFS - Leitura, Escrita e Remoção
@@ -427,17 +491,25 @@ int fs_read_entry(int index, struct fs_entry *entry)
     if (index < 0 || index >= FS_MAX_ENTRIES)
         return 0;
 
-    int entries_per_sector = FS_SECTOR_SIZE / FS_ENTRY_SIZE;
+    int entries_per_sector =
+        FS_SECTOR_SIZE / FS_ENTRY_SIZE;
 
-    unsigned int sector = FS_ENTRY_SECTOR + (index / entries_per_sector);
-    unsigned int offset = (index % entries_per_sector) * FS_ENTRY_SIZE;
+    unsigned int sector =
+        fs_base_lba +
+        FS_ENTRY_SECTOR +
+        (index / entries_per_sector);
+
+    unsigned int offset =
+        (index % entries_per_sector) *
+        FS_ENTRY_SIZE;
 
     if (!ata_read_sector(sector, fs_sector))
         return 0;
 
     for (int i = 0; i < FS_ENTRY_SIZE; i++)
     {
-        ((unsigned char *)entry)[i] = fs_sector[offset + i];
+        ((unsigned char *)entry)[i] =
+            fs_sector[offset + i];
     }
 
     return 1;
@@ -449,7 +521,7 @@ int fs_write_entry(int index, struct fs_entry *entry)
         return 0;
 
     int entries_per_sector = FS_SECTOR_SIZE / FS_ENTRY_SIZE;
-    unsigned int sector = FS_ENTRY_SECTOR + (index / entries_per_sector);
+    unsigned int sector = fs_base_lba + FS_ENTRY_SECTOR + (index / entries_per_sector);
     unsigned int offset = (index % entries_per_sector) * FS_ENTRY_SIZE;
 
     if (!ata_read_sector(sector, fs_sector))
@@ -501,7 +573,9 @@ int fs_find(const char *name, unsigned int parent)
     for (int i = 0; i < FS_MAX_ENTRIES; i++)
     {
         if (!fs_read_entry(i, &entry))
-            return -1;
+        {
+            continue;
+        }
 
         if (!entry.used)
             continue;
@@ -529,7 +603,6 @@ int fs_find(const char *name, unsigned int parent)
 
     return -1;
 }
-
 
 void fs_list(unsigned int parent)
 {
@@ -1230,14 +1303,14 @@ void execute_command(char *command)
 
     else if (strcmp(command, "about") == 0)
     {
-        print("NyteOS v0.1\n");
+        print("NyteOS v0.2\n");
         print("32-bit Operating System.\n");
         print("Filesystem: NyteFS\n");
     }
 
     else if (strcmp(command, "version") == 0)
     {
-        print("NyteOS v0.1\n");
+        print("NyteOS v0.2\n");
     }
 
     else if (strcmp(command, "whichdir") == 0)
@@ -1493,27 +1566,441 @@ void shell(void)
     }
 }
 
+/* ============================================================
+ * BOOT SCREEN
+ * ============================================================ */
+
+static void splash_put_pixel(uint32_t x, uint32_t y, uint32_t color)
+{
+    if (!framebuffer)
+        return;
+
+    uint32_t bytes_per_pixel = framebuffer_bpp / 8;
+
+    volatile uint8_t *pixel =
+        (volatile uint8_t *)(framebuffer +
+        y * framebuffer_pitch +
+        x * bytes_per_pixel);
+
+    if (framebuffer_bpp == 32)
+    {
+        *(volatile uint32_t *)pixel = color;
+    }
+    else if (framebuffer_bpp == 24)
+    {
+        pixel[0] = color & 0xFF;
+        pixel[1] = (color >> 8) & 0xFF;
+        pixel[2] = (color >> 16) & 0xFF;
+    }
+}
+
+static void splash_clear(uint32_t color)
+{
+    uint32_t width =
+        framebuffer_pitch / (framebuffer_bpp / 8);
+
+    uint32_t height = 600;
+
+    for (uint32_t y = 0; y < height; y++)
+    {
+        for (uint32_t x = 0; x < width; x++)
+        {
+            splash_put_pixel(x, y, color);
+        }
+    }
+}
+
+static void splash_rect(
+    uint32_t x,
+    uint32_t y,
+    uint32_t width,
+    uint32_t height,
+    uint32_t color)
+{
+    for (uint32_t yy = y; yy < y + height; yy++)
+    {
+        for (uint32_t xx = x; xx < x + width; xx++)
+        {
+            splash_put_pixel(xx, yy, color);
+        }
+    }
+}
+
+#define SPLASH_LETTER_DELAY_MS 250
+#define SPLASH_OS_DELAY_MS     1000
+
+#define SPLASH_CHAR_WIDTH      12
+#define SPLASH_CHAR_HEIGHT     15
+#define SPLASH_TEXT_SCALE      3
+#define SPLASH_CHAR_ADVANCE    14
+
+static const uint16_t splash_font[26][15] = {
+    /* A */ {
+        0x1F0,0x3F8,0x718,0x618,0x618,
+        0x618,0x7FE,0x7FE,0x618,0x618,
+        0x618,0x618,0x618,0x618,0x618
+    },
+
+    /* B */ {
+        0x7F0,0x7F8,0x618,0x618,0x618,
+        0x7F0,0x7F8,0x618,0x618,0x618,
+        0x618,0x618,0x7F8,0x7F0,0x000
+    },
+
+    /* C */ {
+        0x1F0,0x3F8,0x71C,0x60C,0x600,
+        0x600,0x600,0x600,0x600,0x600,
+        0x60C,0x71C,0x3F8,0x1F0,0x000
+    },
+
+    /* D */ {
+        0x7F0,0x7F8,0x61C,0x60C,0x60C,
+        0x60C,0x60C,0x60C,0x60C,0x60C,
+        0x60C,0x61C,0x7F8,0x7F0,0x000
+    },
+
+    /* E */ {
+        0x7FC,0x600,0x600,0x600,0x600,
+        0x600,0x600,0x7F8,0x600,0x600,
+        0x600,0x600,0x600,0x7FC,0x000
+    },
+
+    /* F */ {
+        0x7FE,0x7FE,0x600,0x600,0x600,
+        0x600,0x600,0x7F8,0x7F8,0x600,
+        0x600,0x600,0x600,0x600,0x600
+    },
+
+    /* G */ {
+        0x1F0,0x3F8,0x71C,0x60C,0x600,
+        0x600,0x67C,0x67C,0x60C,0x60C,
+        0x60C,0x71C,0x3F8,0x1F0,0x000
+    },
+
+    /* H */ {
+        0x60C,0x60C,0x60C,0x60C,0x60C,
+        0x60C,0x7FE,0x7FE,0x60C,0x60C,
+        0x60C,0x60C,0x60C,0x60C,0x000
+    },
+
+    /* I */ {
+        0x7FE,0x7FE,0x0C0,0x0C0,0x0C0,
+        0x0C0,0x0C0,0x0C0,0x0C0,0x0C0,
+        0x0C0,0x0C0,0x0C0,0x7FE,0x7FE
+    },
+
+    /* J */ {
+        0x03F,0x03F,0x00C,0x00C,0x00C,
+        0x00C,0x00C,0x00C,0x60C,0x60C,
+        0x60C,0x71C,0x3F8,0x1F0,0x000
+    },
+
+    /* K */ {
+        0x60C,0x618,0x630,0x660,0x6C0,
+        0x780,0x780,0x6C0,0x660,0x630,
+        0x618,0x60C,0x60C,0x60C,0x000
+    },
+
+    /* L */ {
+        0x600,0x600,0x600,0x600,0x600,
+        0x600,0x600,0x600,0x600,0x600,
+        0x600,0x600,0x600,0x7FE,0x7FE
+    },
+
+    /* M */ {
+        0x60C,0x71C,0x7FC,0x7FC,0x6CC,
+        0x6CC,0x60C,0x60C,0x60C,0x60C,
+        0x60C,0x60C,0x60C,0x60C,0x000
+    },
+
+    /* N */ {
+        0x60C,0x70C,0x78C,0x7CC,0x6CC,
+        0x66C,0x63C,0x61C,0x60C,0x60C,
+        0x60C,0x60C,0x60C,0x60C,0x000
+    },
+
+    /* O */ {
+        0x1F0,0x3F8,0x71C,0x60C,0x60C,
+        0x60C,0x60C,0x60C,0x60C,0x60C,
+        0x60C,0x71C,0x3F8,0x1F0,0x000
+    },
+
+    /* P */ {
+        0x7F0,0x7F8,0x60C,0x60C,0x60C,
+        0x60C,0x7F8,0x7F0,0x600,0x600,
+        0x600,0x600,0x600,0x600,0x000
+    },
+
+    /* Q */ {
+        0x1F0,0x3F8,0x71C,0x60C,0x60C,
+        0x60C,0x60C,0x60C,0x66C,0x63C,
+        0x71C,0x3F8,0x1F0,0x018,0x00C
+    },
+
+    /* R */ {
+        0x7F0,0x7F8,0x60C,0x60C,0x60C,
+        0x60C,0x7F8,0x7F0,0x6C0,0x660,
+        0x630,0x618,0x60C,0x60C,0x000
+    },
+
+    /* S */ {
+        0x1F8,0x3FC,0x70C,0x600,0x600,
+        0x700,0x3F8,0x07C,0x00C,0x00C,
+        0x60C,0x70C,0x3FC,0x1F8,0x000
+    },
+
+    /* T */ {
+        0x7FE,0x7FE,0x060,0x060,0x060,
+        0x060,0x060,0x060,0x060,0x060,
+        0x060,0x060,0x060,0x060,0x000
+    },
+
+    /* U */ {
+        0x60C,0x60C,0x60C,0x60C,0x60C,
+        0x60C,0x60C,0x60C,0x60C,0x60C,
+        0x60C,0x71C,0x3F8,0x1F0,0x000
+    },
+
+    /* V */ {
+        0x60C,0x60C,0x60C,0x60C,0x60C,
+        0x60C,0x60C,0x318,0x318,0x198,
+        0x198,0x0F0,0x0F0,0x000,0x000
+    },
+
+    /* W */ {
+        0x60C,0x60C,0x60C,0x60C,0x60C,
+        0x6CC,0x6CC,0x7FC,0x7FC,0x71C,
+        0x71C,0x60C,0x60C,0x60C,0x000
+    },
+
+    /* X */ {
+        0x60C,0x60C,0x318,0x318,0x198,
+        0x0F0,0x0F0,0x198,0x318,0x318,
+        0x60C,0x60C,0x60C,0x60C,0x000
+    },
+
+    /* Y */ {
+        0xC0C,0xC0C,0x618,0x618,0x330,
+        0x1E0,0x1E0,0x0C0,0x0C0,0x0C0,
+        0x0C0,0x0C0,0x0C0,0x0C0,0x000
+    },
+
+    /* Z */ {
+        0x7FE,0x7FE,0x01C,0x038,0x070,
+        0x0E0,0x1C0,0x380,0x700,0x600,
+        0x600,0x600,0x7FE,0x7FE,0x000
+    }
+};
+
+static void splash_draw_char(
+    uint32_t x,
+    uint32_t y,
+    char c,
+    uint32_t color
+)
+{
+    if (c < 'A' || c > 'Z')
+        return;
+
+    const uint16_t *glyph = splash_font[c - 'A'];
+
+    for (uint32_t row = 0; row < SPLASH_CHAR_HEIGHT; row++)
+    {
+        for (uint32_t col = 0; col < SPLASH_CHAR_WIDTH; col++)
+        {
+            if (glyph[row] & (1 << (11 - col)))
+            {
+                splash_rect(
+                    x + col * SPLASH_TEXT_SCALE,
+                    y + row * SPLASH_TEXT_SCALE,
+                    SPLASH_TEXT_SCALE,
+                    SPLASH_TEXT_SCALE,
+                    color
+                );
+            }
+        }
+    }
+}
+
+static void splash_fade_char(
+    uint32_t x,
+    uint32_t y,
+    char c)
+{
+    const uint32_t steps = 20;
+
+    const uint8_t target_r = 124;
+    const uint8_t target_g = 58;
+    const uint8_t target_b = 237;
+
+    for (uint32_t step = 1; step <= steps; step++)
+    {
+        uint8_t r =
+            (uint8_t)((target_r * step) / steps);
+
+        uint8_t g =
+            (uint8_t)((target_g * step) / steps);
+
+        uint8_t b =
+            (uint8_t)((target_b * step) / steps);
+
+        uint32_t color =
+            ((uint32_t)r << 16) |
+            ((uint32_t)g << 8) |
+            b;
+
+        splash_draw_char(
+            x,
+            y,
+            c,
+            color
+        );
+
+        pit_wait_ms(10);
+    }
+}
 
 /* ============================================================
-   Kernel
-   ============================================================ */
+ * Boot splash
+ * ============================================================ */
+
+static void boot_splash(void)
+{
+    if (!framebuffer)
+        return;
+
+    uint32_t width =
+        framebuffer_pitch / (framebuffer_bpp / 8);
+
+    uint32_t height = 600;
+
+    splash_clear(0x00000000);
+
+    uint32_t scale = SPLASH_TEXT_SCALE;
+
+    uint32_t text_width =
+        4 * SPLASH_CHAR_ADVANCE * scale;
+
+    uint32_t text_x =
+        (width - text_width) / 2;
+
+    uint32_t text_y =
+        (height / 2) - 40;
+
+    splash_fade_char(
+        text_x,
+        text_y,
+        'N'
+    );
+
+    pit_wait_ms(SPLASH_LETTER_DELAY_MS);
+
+    splash_fade_char(
+        text_x + SPLASH_CHAR_ADVANCE * scale,
+        text_y,
+        'Y'
+    );
+
+    pit_wait_ms(SPLASH_LETTER_DELAY_MS);
+
+    splash_fade_char(
+        text_x + 2 * SPLASH_CHAR_ADVANCE * scale,
+        text_y,
+        'T'
+    );
+
+    pit_wait_ms(SPLASH_LETTER_DELAY_MS);
+
+    splash_fade_char(
+        text_x + 3 * SPLASH_CHAR_ADVANCE * scale,
+        text_y,
+        'E'
+    );
+
+    pit_wait_ms(SPLASH_OS_DELAY_MS);
+
+    uint32_t os_width =
+        2 * SPLASH_CHAR_ADVANCE * scale;
+
+    uint32_t os_x =
+        (width - os_width) / 2;
+
+    uint32_t os_y =
+        text_y + 60;
+
+    splash_fade_char(
+        os_x,
+        os_y,
+        'O'
+    );
+
+    splash_fade_char(
+        os_x + SPLASH_CHAR_ADVANCE * scale,
+        os_y,
+        'S'
+    );
+
+    uint32_t bar_width = 280;
+    uint32_t bar_height = 4;
+
+    uint32_t bar_x =
+        (width - bar_width) / 2;
+
+    uint32_t bar_y =
+        os_y + 60;
+
+    splash_rect(
+        bar_x,
+        bar_y,
+        bar_width,
+        bar_height,
+        0x00202020
+    );
+
+    for (uint32_t progress = 0;
+         progress <= bar_width;
+         progress += 4)
+    {
+        splash_rect(
+            bar_x,
+            bar_y,
+            progress,
+            bar_height,
+            0x007C3AED
+        );
+
+        pit_wait_ms(10);
+    }
+}
+
+/* ============================================================
+ * KERNEL MAIN
+ * ============================================================ */
 
 extern void shell_ui(void);
 
 void kernel_main(void)
 {
+    kb_head = 0;
+    kb_tail = 0;
+    init_stack_tracker();
+
     framebuffer_init();
 
-    init_idt();
-    init_nytefs_default();
+    pit_init();
 
-    init_stack_tracker();
+    boot_splash();
+
+    clear_screen();
+
+    init_idt();
+
+    __asm__ volatile ("sti");
 
     shell_ui();
 
-    rtc_time_t now;
-    rtc_get_time(&now);
-
     while (1)
+    {
         __asm__ volatile ("hlt");
+    }
 }

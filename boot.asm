@@ -16,22 +16,12 @@ start:
 
     mov [BOOT_DRIVE], dl
 
-    ; ========================================================
-    ; CARREGA KERNEL VIA LBA
-    ; ========================================================
-
-    mov bx, KERNEL_OFFSET
-
     mov ah, 0x42
     mov dl, [BOOT_DRIVE]
     mov si, dap
     int 0x13
 
     jc disk_error
-
-    ; ========================================================
-    ; VBE - VERIFICA SE EXISTE
-    ; ========================================================
 
     mov ax, 0x4F00
     mov di, VBE_INFO_ADDR
@@ -47,13 +37,6 @@ start:
     cmp ax, 0x004F
     jne vbe_error
 
-    ; ========================================================
-    ; PEGA PONTEIRO PARA LISTA DE MODOS
-    ;
-    ; VBEInfoBlock + 0x0E = ModeList offset
-    ; VBEInfoBlock + 0x10 = ModeList segment
-    ; ========================================================
-
     mov si, VBE_INFO_ADDR
 
     mov dx, [si + 0x0E]
@@ -61,10 +44,6 @@ start:
 
     mov [MODE_LIST_OFFSET], dx
     mov [MODE_LIST_SEGMENT], bx
-
-    ; ========================================================
-    ; PROCURA 800x600x32
-    ; ========================================================
 
     mov ax, bx
     mov es, ax
@@ -79,10 +58,6 @@ find_mode:
     je vbe_error
 
     mov [CURRENT_MODE], cx
-
-    ; ========================================================
-    ; sei lá deve ser vbe get mode info
-    ; ========================================================
 
     push di
     push es
@@ -102,12 +77,6 @@ find_mode:
     cmp ax, 0x004F
     jne next_mode
 
-    ; ========================================================
-    ; Verifica se modo suporta framebuffer linear
-    ;
-    ; ModeAttributes bit 7 = Linear Framebuffer
-    ; ========================================================
-
     mov ax, [VBE_MODE_INFO + 0x00]
 
     test ax, 0x80
@@ -122,10 +91,6 @@ find_mode:
 
     cmp ax, 600
     jne next_mode
-
-    ; ========================================================
-    ; 32 bits
-    ; ========================================================
 
     mov al, [VBE_MODE_INFO + 0x19]
 
@@ -144,27 +109,15 @@ find_mode:
     cmp ax, 0x004F
     jne vbe_error
 
-    ; ========================================================
-    ; PEGA FRAMEBUFFER
-    ; ========================================================
-
     mov eax, [VBE_MODE_INFO + 0x28]
 
     mov [FRAMEBUFFER], eax
-
-    ; ========================================================
-    ; PEGA PITCH
-    ; ========================================================
 
     xor eax, eax
 
     mov ax, [VBE_MODE_INFO + 0x10]
 
     mov [PITCH], eax
-
-    ; ========================================================
-    ; PEGA BPP
-    ; ========================================================
 
     xor eax, eax
 
@@ -181,11 +134,6 @@ next_mode:
 
     jmp find_mode
 
-
-; ============================================================
-; PROTECTED MODE
-; ============================================================
-
 enter_pm:
 
     cli
@@ -197,11 +145,6 @@ enter_pm:
     mov cr0, eax
 
     jmp CODE_SEG:init_pm
-
-
-; ============================================================
-; ERROS
-; ============================================================
 
 disk_error:
 
@@ -241,8 +184,8 @@ print_str:
     ret
 
 
-msg_disk_error db "Erro LBA ao ler o kernel!", 0
-msg_vbe_error  db "VBE 800x600x32 nao encontrado!", 0
+msg_disk_error db "LBA error when reading kernel!", 0
+msg_vbe_error  db "VBE 800x600x32 not found!", 0
 
 BOOT_DRIVE db 0
 
@@ -255,11 +198,6 @@ FRAMEBUFFER dd 0
 PITCH       dd 0
 BPP         dd 0
 
-
-; ============================================================
-; DAP
-; ============================================================
-
 align 4
 
 dap:
@@ -269,11 +207,6 @@ dap:
     dw 0x0000
     dw 0x1000
     dq 1
-
-
-; ============================================================
-; GDT
-; ============================================================
 
 gdt_start:
 
@@ -314,11 +247,6 @@ gdt_descriptor:
 CODE_SEG equ gdt_code - gdt_start
 DATA_SEG equ gdt_data - gdt_start
 
-
-; ============================================================
-; 32-BIT PROTECTED MODE
-; ============================================================
-
 [bits 32]
 
 init_pm:
@@ -346,14 +274,6 @@ init_pm:
     mov ebp, 0x90000
     mov esp, ebp
 
-    ; --------------------------------------------------------
-    ; Passa informações pro kernel
-    ;
-    ; 0x90000 = framebuffer
-    ; 0x90004 = pitch
-    ; 0x90008 = bpp
-    ; --------------------------------------------------------
-
     mov eax, [FRAMEBUFFER]
     mov [BOOT_INFO_ADDR], eax
 
@@ -362,10 +282,6 @@ init_pm:
 
     mov eax, [BPP]
     mov [BOOT_INFO_ADDR + 8], eax
-
-    ; --------------------------------------------------------
-    ; Kernel
-    ; --------------------------------------------------------
 
     call KERNEL_OFFSET
 
