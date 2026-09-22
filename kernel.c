@@ -17,10 +17,10 @@ volatile uint32_t framebuffer_bpp;
 
 uint32_t fs_base_lba = 0;
 
-#define FS_START_SECTOR 18
-#define FS_ENTRY_SECTOR 19
-#define FS_BITMAP_SECTOR 35
-#define FS_DATA_SECTOR 36
+#define FS_START_SECTOR 100
+#define FS_ENTRY_SECTOR 101
+#define FS_BITMAP_SECTOR 117
+#define FS_DATA_SECTOR 118
 
 #define FS_MAX_ENTRIES 128
 #define FS_ENTRY_SIZE 64
@@ -229,9 +229,62 @@ void pic_remap(void) {
 volatile char pending_key = 0;
 volatile int key_pending = 0;
 
+volatile int ctrl_down = 0;
+volatile int shift_down = 0;
+volatile int caps_lock = 0;
+
 void keyboard_handler_main(void)
 {
     unsigned char scancode = inb(0x60);
+
+    if (scancode == 0x1D)
+    {
+        ctrl_down = 1;
+        outb(0x20, 0x20);
+        return;
+    }
+
+    if (scancode == 0x9D)
+    {
+        ctrl_down = 0;
+        outb(0x20, 0x20);
+        return;
+    }
+
+    if (scancode == 0x2A)
+    {
+        shift_down = 1;
+        outb(0x20, 0x20);
+        return;
+    }
+
+    if (scancode == 0xAA)
+    {
+        shift_down = 0;
+        outb(0x20, 0x20);
+        return;
+    }
+
+    if (scancode == 0x36)
+    {
+        shift_down = 1;
+        outb(0x20, 0x20);
+        return;
+    }
+
+    if (scancode == 0xB6)
+    {
+        shift_down = 0;
+        outb(0x20, 0x20);
+        return;
+    }
+
+    if (scancode == 0x3A)
+    {
+        caps_lock = !caps_lock;
+        outb(0x20, 0x20);
+        return;
+    }
 
     if (scancode & 0x80)
     {
@@ -240,11 +293,23 @@ void keyboard_handler_main(void)
     }
 
     static const char keymap[128] = {
-        0, 27, '1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '-', '=', '\b',
-        '\t', 'q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p', '[', ']', '\n',
-        0, 'a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l', ';', '\'', '`',
-        0, '\\', 'z', 'x', 'c', 'v', 'b', 'n', 'm', ',', '.', '/', 0,
-        '*', 0, ' '
+        0, 27,
+        '1', '2', '3', '4', '5', '6', '7', '8', '9', '0',
+        '-', '=', '\b',
+        '\t',
+        'q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p',
+        '[', ']', '\n',
+        0,
+        'a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l',
+        ';', '\'', '`',
+        0,
+        '\\',
+        'z', 'x', 'c', 'v', 'b', 'n', 'm',
+        ',', '.', '/',
+        0,
+        '*',
+        0,
+        ' '
     };
 
     if (scancode < 128)
@@ -253,7 +318,32 @@ void keyboard_handler_main(void)
 
         if (c)
         {
-            pending_key = c;
+            if (ctrl_down)
+            {
+                if (c == 's')
+                    pending_key = 19;
+                else if (c == 'c')
+                    pending_key = 3;
+                else if (c == 'x')
+                    pending_key = 24;
+                else
+                    pending_key = c;
+            }
+            else
+            {
+                int upper = 0;
+
+                if (c >= 'a' && c <= 'z')
+                {
+                    upper = shift_down ^ caps_lock;
+                }
+
+                if (upper)
+                    c -= 'a' - 'A';
+
+                pending_key = c;
+            }
+
             key_pending = 1;
         }
     }
@@ -478,7 +568,7 @@ struct fs_entry
     unsigned char type;
     unsigned char used;
 
-    unsigned char reserved[18];
+    unsigned char reserved[14];
 };
 
 #define FS_FILE 1

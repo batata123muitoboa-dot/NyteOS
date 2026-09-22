@@ -6,10 +6,10 @@ import struct
 SECTOR_SIZE = 512
 IMAGE_SIZE = 1024 * 512
 
-FS_START = 80
-ENTRY_START = 81
-BITMAP_SECTOR = 97
-DATA_START = 98
+FS_START = 100
+ENTRY_START = 101
+BITMAP_SECTOR = 117
+DATA_START = 118
 
 MAX_ENTRIES = 128
 ENTRY_SIZE = 64
@@ -23,7 +23,7 @@ def make_entry(name, size, start, sectors, parent, entry_type):
     name_bytes += b"\0" * (32 - len(name_bytes))
 
     return struct.pack(
-        "<32sIIII BB18s",
+        "<32sIIII BB14s",
         name_bytes,
         size,
         start,
@@ -31,7 +31,7 @@ def make_entry(name, size, start, sectors, parent, entry_type):
         parent,
         entry_type,
         1,
-        b"\0" * 18
+        b"\0" * 14
     )
 
 
@@ -149,6 +149,25 @@ def main():
                 sectors
             )
         )
+
+    # --------------------------------------------------------
+    # Bitmap
+    # --------------------------------------------------------
+
+    bitmap = bytearray(SECTOR_SIZE)
+
+    for filename, size, start_sector, sectors in file_entries:
+        if start_sector < DATA_START:
+            continue
+
+        for i in range(sectors):
+            sector = start_sector + i
+            bitmap[sector - DATA_START] = 1
+
+    image[
+        BITMAP_SECTOR * SECTOR_SIZE:
+        (BITMAP_SECTOR + 1) * SECTOR_SIZE
+    ] = bitmap
 
     # --------------------------------------------------------
     # Filesystem entries

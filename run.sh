@@ -13,11 +13,11 @@ nasm -f elf32 keyboard_stub.asm -o keyboard_stub.o
 
 echo "[+] Compiling kernel..."
 
-gcc -m32 -Wall -Wextra -ffreestanding -fno-pie -fno-stack-protector -c kernel.c -o kernel.o
+gcc -m32 -Wall -Wextra -Wno-unused-variable -Wno-unused-function -Wno-sign-compare -ffreestanding -fno-pie -fno-stack-protector -c kernel.c -o kernel.o
 
 echo "[+] Compiling interface..."
 
-gcc -m32 -Wall -Wextra -ffreestanding -fno-pie -fno-stack-protector -c shell.c -o shell.o
+gcc -m32 -Wall -Wextra -Wno-unused-variable -Wno-unused-function -Wno-sign-compare -ffreestanding -fno-pie -fno-stack-protector -c shell.c -o shell.o
 
 echo "[+] Compiling RTC..."
 

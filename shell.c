@@ -19,6 +19,11 @@ extern volatile char key_buffer[128];
 extern volatile int kb_head;
 extern volatile int kb_tail;
 
+extern int ata_read_sector(unsigned int lba, unsigned char *buffer);
+
+extern void cmd_write(const char *name);
+extern void cmd_edit(const char *name);
+
 static int WIDTH = 800;
 static int HEIGHT = 600;
 
@@ -40,6 +45,15 @@ struct fs_entry {
 };
 
 extern int fs_read_entry(int index, struct fs_entry *entry);
+
+static int files_creating = 0;
+static char files_new_name[32];
+static int files_new_name_len = 0;
+
+extern int fs_find(const char *name, int parent);
+extern int fs_find_free_entry(void);
+extern int fs_find_free_data_sector(void);
+extern int fs_write_entry(int index, struct fs_entry *entry);
 
 void term_print_line(const char* str, uint32_t color);
 
@@ -1051,11 +1065,6 @@ static void draw_icon(
 static unsigned char icon_bmp[ICON_BMP_MAX_SIZE];
 extern unsigned int current_dir;
 
-extern int fs_write_entry(int index, struct fs_entry *entry);
-extern int fs_find(const char *name, unsigned int parent);
-extern int fs_find_free_entry(void);
-extern unsigned int fs_find_free_data_sector(void);
-
 extern unsigned char fs_sector[512];
 extern unsigned char fs_bitmap[512];
 
@@ -1117,10 +1126,10 @@ static int load_icon_bmp(
 #define FS_ENTRY_SIZE 64
 #define FS_MAX_ENTRIES 128
 
-#define FS_START_SECTOR  80
-#define FS_ENTRY_SECTOR  81
-#define FS_BITMAP_SECTOR 97
-#define FS_DATA_SECTOR   98
+#define FS_START_SECTOR  100
+#define FS_ENTRY_SECTOR  101
+#define FS_BITMAP_SECTOR 117
+#define FS_DATA_SECTOR   118
 
 static unsigned char bmp_buffer[4096];
 
@@ -3131,6 +3140,9 @@ static void window_toggle_maximize(int index);
 static int taskbar_window_at(int x, int y);
 static void draw_taskbar(void);
 static void desktop_draw(void);
+static void files_open_file(int index);
+
+static int files_selected_entry = -1;
 
 #define SETTINGS_MAIN       0
 #define SETTINGS_DESKTOP    1
@@ -3138,12 +3150,19 @@ static void desktop_draw(void);
 
 static int settings_page = SETTINGS_MAIN;
 
+static void files_delete_entry(int index);
+
+static int files_context_menu = 0;
+static int files_context_entry = -1;
+static int files_context_x = 0;
+static int files_context_y = 0;
+
 static void window_manager_mouse_down(void)
 {
-
     int task = taskbar_window_at(mouse_x, mouse_y);
 
-    if (task >= 0) {
+    if (task >= 0)
+    {
         windows[task].minimized = 0;
         window_raise(task);
         return;
@@ -3151,53 +3170,74 @@ static void window_manager_mouse_down(void)
 
     int index = window_at(mouse_x, mouse_y);
 
-    if (index >= 0) {
+    if (index >= 0)
+    {
+        Window *win = &windows[index];
 
-            Window *win = &windows[index];
+        window_raise(index);
 
-            window_raise(index);
+        if (point_in_close_button(
+                win,
+                mouse_x,
+                mouse_y))
+        {
+            window_close(index);
+            return;
+        }
 
-            if (point_in_close_button(
-                    win,
-                    mouse_x,
-                    mouse_y)) {
+        if (point_in_minimize_button(
+                win,
+                mouse_x,
+                mouse_y))
+        {
+            window_minimize(index);
+            return;
+        }
 
-                window_close(index);
-                return;
-            }
+        if (point_in_maximize_button(
+                win,
+                mouse_x,
+                mouse_y))
+        {
+            window_toggle_maximize(index);
+            return;
+        }
 
-    if (point_in_minimize_button(
-        win,
-        mouse_x,
-        mouse_y)) {
+        if (point_in_titlebar(
+                win,
+                mouse_x,
+                mouse_y))
+        {
+            win->dragging = 1;
+            windows[index].active = 1;
 
-        window_minimize(index);
-        return;
-    }
+            win->drag_offset_x =
+                mouse_x - win->x;
 
-    if (point_in_maximize_button(
-            win,
-            mouse_x,
-            mouse_y)) {
+            win->drag_offset_y =
+                mouse_y - win->y;
 
-        window_toggle_maximize(index);
-        return;
-    }
+            return;
+        }
 
-    if (index == WINDOW_SETTINGS)
+        if (index == WINDOW_SETTINGS)
         {
             if (settings_page == SETTINGS_MAIN)
             {
-                if (mouse_x >= win->x + 10 && mouse_x < win->x + 220 &&
-                    mouse_y >= win->y + 130 && mouse_y < win->y + 155)
+                if (mouse_x >= win->x + 10 &&
+                    mouse_x < win->x + 220 &&
+                    mouse_y >= win->y + 130 &&
+                    mouse_y < win->y + 155)
                 {
                     settings_page = SETTINGS_DESKTOP;
                     desktop_draw();
                     return;
                 }
 
-                if (mouse_x >= win->x + 10 && mouse_x < win->x + 220 &&
-                    mouse_y >= win->y + 185 && mouse_y < win->y + 210)
+                if (mouse_x >= win->x + 10 &&
+                    mouse_x < win->x + 220 &&
+                    mouse_y >= win->y + 185 &&
+                    mouse_y < win->y + 210)
                 {
                     settings_page = SETTINGS_ABOUT;
                     desktop_draw();
@@ -3206,24 +3246,30 @@ static void window_manager_mouse_down(void)
             }
             else if (settings_page == SETTINGS_DESKTOP)
             {
-                if (mouse_x >= win->x + 20 && mouse_x < win->x + 220 &&
-                    mouse_y >= win->y + 85 && mouse_y < win->y + 185)
+                if (mouse_x >= win->x + 20 &&
+                    mouse_x < win->x + 220 &&
+                    mouse_y >= win->y + 85 &&
+                    mouse_y < win->y + 185)
                 {
                     selected_wallpaper = "dwallpaper.bmp";
                     desktop_draw();
                     return;
                 }
 
-                if (mouse_x >= win->x + 20 && mouse_x < win->x + 220 &&
-                    mouse_y >= win->y + 205 && mouse_y < win->y + 285)
+                if (mouse_x >= win->x + 20 &&
+                    mouse_x < win->x + 220 &&
+                    mouse_y >= win->y + 205 &&
+                    mouse_y < win->y + 285)
                 {
                     selected_wallpaper = "wallpaper2.bmp";
                     desktop_draw();
                     return;
                 }
 
-                if (mouse_x >= win->x + 10 && mouse_x < win->x + 120 &&
-                    mouse_y >= win->y + 287 && mouse_y < win->y + 340)
+                if (mouse_x >= win->x + 10 &&
+                    mouse_x < win->x + 120 &&
+                    mouse_y >= win->y + 287 &&
+                    mouse_y < win->y + 340)
                 {
                     settings_page = SETTINGS_MAIN;
                     desktop_draw();
@@ -3232,8 +3278,10 @@ static void window_manager_mouse_down(void)
             }
             else if (settings_page == SETTINGS_ABOUT)
             {
-                if (mouse_x >= win->x + 10 && mouse_x < win->x + 120 &&
-                    mouse_y >= win->y + 275 && mouse_y < win->y + 325)
+                if (mouse_x >= win->x + 10 &&
+                    mouse_x < win->x + 120 &&
+                    mouse_y >= win->y + 275 &&
+                    mouse_y < win->y + 325)
                 {
                     settings_page = SETTINGS_MAIN;
                     desktop_draw();
@@ -3242,47 +3290,194 @@ static void window_manager_mouse_down(void)
             }
         }
 
-        if (point_in_titlebar(
-                win,
-                mouse_x,
-                mouse_y)) {
+        if (mouse_right)
+{
+    files_context_menu = 0;
 
-            win->dragging = 1;
+    int index = window_at(mouse_x, mouse_y);
 
-            windows[index].active = 1;
+    if (index == WINDOW_FILES)
+    {
+        Window *win = &windows[index];
 
-            win->drag_offset_x =
-                mouse_x - win->x;
+        int first_y = win->y + 60;
 
-            win->drag_offset_y =
-                mouse_y - win->y;
+        if (current_dir != 0)
+            first_y += 24;
+
+        if (mouse_x >= win->x + 10 &&
+            mouse_x < win->x + win->w - 10 &&
+            mouse_y >= first_y)
+        {
+            int row =
+                (mouse_y - first_y) / 24;
+
+            int visible_row = 0;
+
+            for (int i = 0; i < FS_MAX_ENTRIES; i++)
+            {
+                struct fs_entry entry;
+
+                if (!fs_read_entry(i, &entry))
+                    continue;
+
+                if (!entry.used)
+                    continue;
+
+                if (i == 0)
+                    continue;
+
+                if (entry.parent != current_dir)
+                    continue;
+
+                if (visible_row == row)
+                {
+                    if (entry.type == FS_FILE &&
+                        entry.parent != 0)
+                    {
+                        files_context_entry = i;
+                        files_context_x = mouse_x;
+                        files_context_y = mouse_y;
+                        files_context_menu = 1;
+                    }
+
+                    desktop_draw();
+                    return;
+                }
+
+                visible_row++;
+            }
+        }
+    }
+
+    desktop_draw();
+    return;
+}
+
+if (files_context_menu)
+{
+    if (mouse_x >= files_context_x &&
+        mouse_x < files_context_x + 110 &&
+        mouse_y >= files_context_y &&
+        mouse_y < files_context_y + 35)
+    {
+        files_delete_entry(files_context_entry);
+    }
+
+    files_context_menu = 0;
+    desktop_draw();
+    return;
+}
+
+if (index == WINDOW_FILES)
+{
+    if (mouse_x >= win->x + win->w - 110 &&
+        mouse_x < win->x + win->w - 15 &&
+        mouse_y >= win->y + 30 &&
+        mouse_y < win->y + 55)
+    {
+        files_creating = 1;
+        files_new_name_len = 0;
+        files_new_name[0] = '\0';
+        desktop_draw();
+        return;
+    }
+            int first_y = win->y + 60;
+
+            if (current_dir != 0)
+            {
+                if (mouse_x >= win->x + 10 &&
+                    mouse_x < win->x + win->w - 10 &&
+                    mouse_y >= first_y &&
+                    mouse_y < first_y + 24)
+                {
+                    struct fs_entry dir;
+
+                    if (fs_read_entry(current_dir, &dir))
+                    {
+                        current_dir = dir.parent;
+                        files_selected_entry = -1;
+                        desktop_draw();
+                    }
+
+                    return;
+                }
+
+                first_y += 24;
+            }
+
+            if (mouse_x >= win->x + 10 &&
+                mouse_x < win->x + win->w - 10 &&
+                mouse_y >= first_y)
+            {
+                int row =
+                    (mouse_y - first_y) / 24;
+
+                int visible_row = 0;
+
+                for (int i = 0; i < FS_MAX_ENTRIES; i++)
+                {
+                    struct fs_entry entry;
+
+                    if (!fs_read_entry(i, &entry))
+                        continue;
+
+                    if (!entry.used)
+                        continue;
+
+                    if (i == 0)
+                        continue;
+
+                    if (entry.parent != current_dir)
+                        continue;
+
+                    if (visible_row == row)
+                    {
+                        files_selected_entry = i;
+
+                        if (entry.type == FS_DIR)
+                        {
+                            current_dir = i;
+                            files_selected_entry = -1;
+                            desktop_draw();
+                        }
+                        else
+                        {
+                            files_open_file(i);
+                        }
+
+                        return;
+                    }
+
+                    visible_row++;
+                }
+            }
+
+            return;
         }
 
         return;
     }
 
-    if (
-        mouse_x >= 30 &&
+    if (mouse_x >= 30 &&
         mouse_x < 78 &&
         mouse_y >= 40 &&
-        mouse_y < 88
-    ) {
+        mouse_y < 88)
+    {
         window_open(WINDOW_FILES);
         return;
     }
 
-    if (
-        mouse_x >= 30 &&
+    if (mouse_x >= 30 &&
         mouse_x < 78 &&
         mouse_y >= 130 &&
-        mouse_y < 178
-    ) {
+        mouse_y < 178)
+    {
         window_open(WINDOW_TERM);
         return;
     }
 
-    if (
-        mouse_x >= 120 &&
+    if (mouse_x >= 120 &&
         mouse_x < 168 &&
         mouse_y >= 40 &&
         mouse_y < 88)
@@ -3409,6 +3604,351 @@ static void window_manager_drag(void)
  * FILE MANAGER
  * ============================================================ */
 
+static char files_view_buffer[513];
+static int files_editor_open = 0;
+static int files_editor_entry = -1;
+static char files_editor_buffer[512];
+static int files_editor_len = 0;
+static int files_editor_cursor = 0;
+
+static void files_finish_create(void);
+
+static void files_delete_entry(int index)
+{
+    if (index < 0)
+        return;
+
+    struct fs_entry entry;
+
+    if (!fs_read_entry(index, &entry))
+        return;
+
+    if (!entry.used)
+        return;
+
+    if (entry.parent == 0)
+        return;
+
+    if (entry.type != FS_FILE)
+        return;
+
+    unsigned char bitmap[512];
+
+    if (!ata_read_sector(FS_BITMAP_SECTOR, bitmap))
+        return;
+
+    for (unsigned int i = 0; i < entry.sector_count; i++)
+    {
+        unsigned int sector = entry.start_sector + i;
+
+        if (sector >= FS_DATA_SECTOR)
+            bitmap[sector - FS_DATA_SECTOR] = 0;
+    }
+
+    if (!ata_write_sector(FS_BITMAP_SECTOR, bitmap))
+        return;
+
+    entry.used = 0;
+
+    fs_write_entry(index, &entry);
+
+    files_selected_entry = -1;
+}
+
+static void draw_files_context_menu(void)
+{
+    if (!files_context_menu)
+        return;
+
+    fill_rect(
+        files_context_x,
+        files_context_y,
+        110,
+        35,
+        DARK_BLUE
+    );
+
+    draw_string(
+        files_context_x + 12,
+        files_context_y + 10,
+        "Delete",
+        RED
+    );
+}
+
+static void files_editor_save(void)
+{
+    if (files_editor_entry < 0)
+        return;
+
+    struct fs_entry entry;
+
+    if (!fs_read_entry(files_editor_entry, &entry))
+        return;
+
+    if (entry.parent == 0)
+        return;
+
+    unsigned char buffer[512];
+
+    for (int i = 0; i < 512; i++)
+        buffer[i] = 0;
+
+    for (int i = 0; i < files_editor_len && i < 511; i++)
+        buffer[i] = (unsigned char)files_editor_buffer[i];
+
+    if (!ata_write_sector(entry.start_sector, buffer))
+        return;
+
+    entry.size = files_editor_len;
+    entry.sector_count = 1;
+
+    fs_write_entry(files_editor_entry, &entry);
+
+    desktop_draw();
+}
+
+static void files_editor_key(char key)
+{
+    if (key == 19)
+    {
+        files_editor_save();
+        return;
+    }
+
+    if (key == 27)
+    {
+        files_editor_open = 0;
+        files_editor_entry = -1;
+        desktop_draw();
+        return;
+    }
+
+    if (key == '\b')
+    {
+        if (files_editor_cursor > 0)
+        {
+            files_editor_cursor--;
+
+            for (int i = files_editor_cursor;
+                 i < files_editor_len;
+                 i++)
+            {
+                files_editor_buffer[i] =
+                    files_editor_buffer[i + 1];
+            }
+
+            files_editor_len--;
+            files_editor_buffer[files_editor_len] = '\0';
+
+            desktop_draw();
+        }
+
+        return;
+    }
+
+    if (key >= 32 && key <= 126)
+    {
+        if (files_editor_len < 511)
+        {
+            for (int i = files_editor_len;
+                 i > files_editor_cursor;
+                 i--)
+            {
+                files_editor_buffer[i] =
+                    files_editor_buffer[i - 1];
+            }
+
+            files_editor_buffer[files_editor_cursor] = key;
+
+            files_editor_cursor++;
+            files_editor_len++;
+
+            files_editor_buffer[files_editor_len] = '\0';
+
+            desktop_draw();
+        }
+
+        return;
+    }
+}
+
+static void files_create_key(char key)
+{
+    if (key == 27)
+    {
+        files_creating = 0;
+        files_new_name_len = 0;
+        files_new_name[0] = '\0';
+        desktop_draw();
+        return;
+    }
+
+    if (key == '\b')
+    {
+        if (files_new_name_len > 0)
+        {
+            files_new_name_len--;
+            files_new_name[files_new_name_len] = '\0';
+            desktop_draw();
+        }
+
+        return;
+    }
+
+    if (key == '\r' || key == '\n')
+    {
+        files_finish_create();
+        return;
+    }
+
+    if (key >= 32 && key <= 126)
+    {
+        if (files_new_name_len < 31)
+        {
+            files_new_name[files_new_name_len++] = key;
+            files_new_name[files_new_name_len] = '\0';
+
+            desktop_draw();
+        }
+
+        return;
+    }
+}
+
+static void files_finish_create(void)
+{
+
+    if (current_dir == 0)
+    {
+        files_creating = 0;
+        files_new_name_len = 0;
+        files_new_name[0] = '\0';
+        desktop_draw();
+        return;
+    }
+
+    if (files_new_name_len == 0)
+    {
+        files_creating = 0;
+        desktop_draw();
+        return;
+    }
+
+    files_new_name[files_new_name_len] = '\0';
+
+    if (fs_find(files_new_name, current_dir) >= 0)
+    {
+        files_creating = 0;
+        desktop_draw();
+        return;
+    }
+
+    int index = fs_find_free_entry();
+
+    if (index < 0)
+    {
+        files_creating = 0;
+        desktop_draw();
+        return;
+    }
+
+    int sector = fs_find_free_data_sector();
+
+    if (sector < 0)
+    {
+        files_creating = 0;
+        desktop_draw();
+        return;
+    }
+
+    struct fs_entry entry;
+
+    for (int i = 0; i < 64; i++)
+        ((unsigned char *)&entry)[i] = 0;
+
+    for (int i = 0; i < files_new_name_len; i++)
+        entry.name[i] = files_new_name[i];
+
+    entry.size = 0;
+    entry.start_sector = sector;
+    entry.sector_count = 1;
+    entry.parent = current_dir;
+    entry.type = FS_FILE;
+    entry.used = 1;
+
+    if (!fs_write_entry(index, &entry))
+    {
+        files_creating = 0;
+        desktop_draw();
+        return;
+    }
+
+    files_creating = 0;
+    files_new_name_len = 0;
+    files_new_name[0] = '\0';
+
+    desktop_draw();
+}
+
+static void files_open_file(int index)
+{
+    struct fs_entry entry;
+
+    if (!fs_read_entry(index, &entry))
+        return;
+
+    if (entry.type == FS_DIR)
+        return;
+
+    unsigned char sector[512];
+
+    if (!ata_read_sector(entry.start_sector, sector))
+        return;
+
+    files_editor_len = entry.size;
+
+    if (files_editor_len > 511)
+        files_editor_len = 511;
+
+    for (int i = 0; i < files_editor_len; i++)
+        files_editor_buffer[i] = sector[i];
+
+    files_editor_buffer[files_editor_len] = '\0';
+
+    files_editor_cursor = files_editor_len;
+    files_editor_entry = index;
+    files_editor_open = 1;
+
+    desktop_draw();
+}
+
+static void files_save_file(void)
+{
+    if (files_editor_entry < 0)
+        return;
+
+    struct fs_entry entry;
+
+    if (!fs_read_entry(files_editor_entry, &entry))
+        return;
+
+    unsigned char sector[512];
+
+    for (int i = 0; i < 512; i++)
+        sector[i] = 0;
+
+    for (int i = 0; i < files_editor_len; i++)
+        sector[i] = files_editor_buffer[i];
+
+    if (!ata_write_sector(entry.start_sector, sector))
+        return;
+
+    entry.size = files_editor_len;
+
+    fs_write_entry(files_editor_entry, &entry);
+}
+
 static void draw_files(void)
 {
     Window *win = &windows[WINDOW_FILES];
@@ -3426,30 +3966,128 @@ static void draw_files(void)
     );
 
     draw_string(
-        win->x + 22,
-        win->y + 94,
-        "user",
+    win->x + win->w - 100,
+    win->y + 38,
+    "+ FILE",
+    GREEN
+);
+
+if (files_creating)
+{
+    fill_rect(
+        win->x + 30,
+        win->y + 90,
+        win->w - 60,
+        55,
+        BLACK
+    );
+
+    draw_string(
+        win->x + 40,
+        win->y + 102,
+        "New file:",
         WHITE
     );
 
-    draw_bmp_icon(
-        win->x + 10,
-        win->y + 46,
-        "files.bmp",
-        48
+    draw_string(
+        win->x + 40,
+        win->y + 122,
+        files_new_name,
+        WHITE
     );
+}
+
+    int y = win->y + 60;
+
+    if (current_dir != 0)
+    {
+        draw_string(win->x + 20, y, "..", YELLOW);
+        y += 24;
+    }
+
+    int folders = 0;
+    int files = 0;
+
+    for (int i = 0; i < FS_MAX_ENTRIES; i++)
+    {
+        struct fs_entry entry;
+
+        if (!fs_read_entry(i, &entry))
+            continue;
+
+        if (!entry.used)
+            continue;
+
+        if (i == 0)
+            continue;
+
+        if (entry.parent != current_dir)
+            continue;
+
+        if (entry.type == FS_DIR)
+        {
+            draw_string(
+                win->x + 20,
+                y,
+                "[DIR]",
+                CYAN
+            );
+
+            folders++;
+        }
+        else
+        {
+            draw_string(
+                win->x + 20,
+                y,
+                "[FILE]",
+                GRAY
+            );
+
+            files++;
+        }
+
+        draw_string(
+            win->x + 70,
+            y,
+            entry.name,
+            WHITE
+        );
+
+        y += 24;
+
+        if (y > win->y + win->h - 45)
+            break;
+    }
+
+    char info[32];
+    int p = 0;
+
+    info[p++] = '0' + folders;
+    info[p++] = ' ';
+    info[p++] = 'f';
+    info[p++] = 'o';
+    info[p++] = 'l';
+    info[p++] = 'd';
+    info[p++] = 'e';
+    info[p++] = 'r';
+    info[p++] = 's';
+    info[p++] = ',';
+    info[p++] = ' ';
+
+    info[p++] = '0' + files;
+    info[p++] = ' ';
+    info[p++] = 'f';
+    info[p++] = 'i';
+    info[p++] = 'l';
+    info[p++] = 'e';
+    info[p++] = 's';
+    info[p] = '\0';
 
     draw_string(
         win->x + 20,
-        win->y + 135,
-        "NyteFS",
-        CYAN
-    );
-
-    draw_string(
-        win->x + 20,
-        win->y + 155,
-        "1 folder(s)",
+        win->y + win->h - 25,
+        info,
         GRAY
     );
 }
@@ -3813,7 +4451,72 @@ for (int z = 0; z < WINDOW_COUNT; z++)
         draw_settings();
     }
 
+if (files_editor_open)
+{
+    draw_window(
+        120,
+        80,
+        560,
+        400,
+        "FILE",
+        1
+    );
+
+    int x = 140;
+    int y = 120;
+
+    int start_x = x;
+    int max_x = 660;
+    int char_width = 8;
+    int line_height = 16;
+
+    for (int i = 0; i < files_editor_len; i++)
+    {
+        char c = files_editor_buffer[i];
+
+        if (c == '\n')
+        {
+            x = start_x;
+            y += line_height;
+            continue;
+        }
+
+        if (x + char_width > max_x)
+        {
+            x = start_x;
+            y += line_height;
+        }
+
+        if (y >= 425)
+            break;
+
+        char text[2];
+
+        text[0] = c;
+        text[1] = '\0';
+
+        draw_string(
+            x,
+            y,
+            text,
+            WHITE
+        );
+
+        x += char_width;
+    }
+
+    draw_string(
+        140,
+        440,
+        "CTRL+S: SAVE    ESC: CLOSE",
+        GRAY
+    );
+}
+
     draw_taskbar();
+
+    if (files_context_menu)
+        draw_files_context_menu();
 }
 
 
@@ -3833,6 +4536,19 @@ static void __attribute__((unused)) desktop_update(void)
 
 static void shell_process_key(char key)
 {
+
+if (files_editor_open)
+{
+    files_editor_key(key);
+    return;
+}
+
+if (files_creating)
+{
+    files_create_key(key);
+    return;
+}
+
     if (key == '\n')
     {
         term_cmd_buffer[0] = '\0';
@@ -3890,6 +4606,7 @@ void shell_ui(void)
     int old_y = mouse_y;
 
     int old_left = 0;
+    int old_right = 0;
 
     while (1) {
 
@@ -3898,7 +4615,35 @@ if (key_pending)
     char key = pending_key;
     key_pending = 0;
 
-    shell_process_key(key);
+    if (files_creating)
+    {
+        if (key == '\n' || key == '\r')
+        {
+            files_finish_create();
+        }
+        else if (key == '\b' || key == 127)
+        {
+            if (files_new_name_len > 0)
+            {
+                files_new_name_len--;
+                files_new_name[files_new_name_len] = '\0';
+                desktop_draw();
+            }
+        }
+        else if (key >= 32 && key <= 126)
+        {
+            if (files_new_name_len < 31)
+            {
+                files_new_name[files_new_name_len++] = key;
+                files_new_name[files_new_name_len] = '\0';
+                desktop_draw();
+            }
+        }
+    }
+    else
+    {
+        shell_process_key(key);
+    }
 }
         mouse_poll();
 
@@ -3920,6 +4665,29 @@ if (key_pending)
 
             draw_clock();
         }
+
+        if (mouse_right && !old_right)
+{
+    int current_x = mouse_x;
+    int current_y = mouse_y;
+
+    mouse_x = old_x;
+    mouse_y = old_y;
+    restore_cursor_background();
+
+    mouse_x = current_x;
+    mouse_y = current_y;
+
+    window_manager_mouse_down();
+
+    desktop_draw();
+
+    save_cursor_background();
+    draw_mouse_cursor();
+
+    old_x = mouse_x;
+    old_y = mouse_y;
+}
 
         if (mouse_left && !old_left) {
 
