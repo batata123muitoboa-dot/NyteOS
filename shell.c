@@ -238,6 +238,69 @@ static void framebuffer_init(void)
 #define TITLE_COLOR      0x00253040
 #define TITLE_ACTIVE     0x000060A0
 
+/* ============================================================
+ * EXCEPTION HANDLER
+ * ============================================================ */
+
+static void fill_rect(
+    int x,
+    int y,
+    int width,
+    int height,
+    uint32_t color
+);
+
+static void draw_string(
+    int x,
+    int y,
+    const char *str,
+    uint32_t color
+);
+
+void nyteos_bsod(uint32_t vector, uint32_t error)
+{
+    (void)vector;
+    (void)error;
+
+    framebuffer_init();
+
+    if (framebuffer == 0)
+        while (1);
+
+    fill_rect(0, 0, 800, 600, DARK_BLUE);
+
+    const char *msg = "NyteOS has crashed and need to restart.";
+
+    int len = 0;
+    while (msg[len])
+        len++;
+
+    int x = (800 - len * 7) / 2;
+
+    draw_string(x, 270, msg, WHITE);
+
+    draw_string(
+        300,
+        310,
+        "Press any key to restart.",
+        WHITE
+    );
+
+    while (inb(0x64) & 1)
+        (void)inb(0x60);
+
+    while (!(inb(0x64) & 1))
+        ;
+
+    (void)inb(0x60);
+
+    while (inb(0x64) & 2)
+        ;
+
+    outb(0x64, 0xFE);
+
+    while (1);
+}
 
 /* ============================================================
  * PIXEL
@@ -1406,7 +1469,8 @@ if (size == -2)
 #define WINDOW_FILES     0
 #define WINDOW_TERM      1
 #define WINDOW_SETTINGS  2
-#define WINDOW_COUNT     3
+#define WINDOW_CALC      3
+#define WINDOW_COUNT     4
 
 typedef struct {
     int x;
@@ -1434,41 +1498,17 @@ typedef struct {
 } Window;
 
 static Window windows[WINDOW_COUNT] = {
-    {
-        90, 170,
-        300, 230,
-        "Files",
-        0, 0, 0,
-        0, 0,
-        0, 0,
-        0, 0, 0, 0
-    },
-
-    {
-        270, 150,
-        430, 260,
-        "Terminal",
-        0, 0, 0,
-        0, 0,
-        0, 0,
-        0, 0, 0, 0
-    },
-
-    {
-        180, 120,
-        440, 330,
-        "Settings",
-        0, 0, 0,
-        0, 0,
-        0, 0,
-        0, 0, 0, 0
-    }
+    { 90, 170, 300, 230, "Files", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+    { 270, 150, 430, 260, "Terminal", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+    { 180, 120, 440, 330, "Settings", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+    { 200, 150, 195, 265, "Calculator", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }
 };
 
 static int window_z[WINDOW_COUNT] = {
     WINDOW_FILES,
     WINDOW_TERM,
-    WINDOW_SETTINGS
+    WINDOW_SETTINGS,
+    WINDOW_CALC
 };
 
 static int active_window = -1;
@@ -3157,6 +3197,13 @@ static int files_context_entry = -1;
 static int files_context_x = 0;
 static int files_context_y = 0;
 
+static int calc_value1 = 0;
+static char calc_op = 0;
+static char calc_display[16] = "0";
+static int calc_new_number = 1;
+
+static void calc_int_to_str(int n, char *buf);
+
 static void window_manager_mouse_down(void)
 {
     int task = taskbar_window_at(mouse_x, mouse_y);
@@ -3176,46 +3223,31 @@ static void window_manager_mouse_down(void)
 
         window_raise(index);
 
-        if (point_in_close_button(
-                win,
-                mouse_x,
-                mouse_y))
+        if (point_in_close_button(win, mouse_x, mouse_y))
         {
             window_close(index);
             return;
         }
 
-        if (point_in_minimize_button(
-                win,
-                mouse_x,
-                mouse_y))
+        if (point_in_minimize_button(win, mouse_x, mouse_y))
         {
             window_minimize(index);
             return;
         }
 
-        if (point_in_maximize_button(
-                win,
-                mouse_x,
-                mouse_y))
+        if (point_in_maximize_button(win, mouse_x, mouse_y))
         {
             window_toggle_maximize(index);
             return;
         }
 
-        if (point_in_titlebar(
-                win,
-                mouse_x,
-                mouse_y))
+        if (point_in_titlebar(win, mouse_x, mouse_y))
         {
             win->dragging = 1;
             windows[index].active = 1;
 
-            win->drag_offset_x =
-                mouse_x - win->x;
-
-            win->drag_offset_y =
-                mouse_y - win->y;
+            win->drag_offset_x = mouse_x - win->x;
+            win->drag_offset_y = mouse_y - win->y;
 
             return;
         }
@@ -3224,20 +3256,16 @@ static void window_manager_mouse_down(void)
         {
             if (settings_page == SETTINGS_MAIN)
             {
-                if (mouse_x >= win->x + 10 &&
-                    mouse_x < win->x + 220 &&
-                    mouse_y >= win->y + 130 &&
-                    mouse_y < win->y + 155)
+                if (mouse_x >= win->x + 10 && mouse_x < win->x + 220 &&
+                    mouse_y >= win->y + 130 && mouse_y < win->y + 155)
                 {
                     settings_page = SETTINGS_DESKTOP;
                     desktop_draw();
                     return;
                 }
 
-                if (mouse_x >= win->x + 10 &&
-                    mouse_x < win->x + 220 &&
-                    mouse_y >= win->y + 185 &&
-                    mouse_y < win->y + 210)
+                if (mouse_x >= win->x + 10 && mouse_x < win->x + 220 &&
+                    mouse_y >= win->y + 185 && mouse_y < win->y + 210)
                 {
                     settings_page = SETTINGS_ABOUT;
                     desktop_draw();
@@ -3246,30 +3274,24 @@ static void window_manager_mouse_down(void)
             }
             else if (settings_page == SETTINGS_DESKTOP)
             {
-                if (mouse_x >= win->x + 20 &&
-                    mouse_x < win->x + 220 &&
-                    mouse_y >= win->y + 85 &&
-                    mouse_y < win->y + 185)
+                if (mouse_x >= win->x + 20 && mouse_x < win->x + 220 &&
+                    mouse_y >= win->y + 85 && mouse_y < win->y + 185)
                 {
                     selected_wallpaper = "dwallpaper.bmp";
                     desktop_draw();
                     return;
                 }
 
-                if (mouse_x >= win->x + 20 &&
-                    mouse_x < win->x + 220 &&
-                    mouse_y >= win->y + 205 &&
-                    mouse_y < win->y + 285)
+                if (mouse_x >= win->x + 20 && mouse_x < win->x + 220 &&
+                    mouse_y >= win->y + 205 && mouse_y < win->y + 285)
                 {
                     selected_wallpaper = "wallpaper2.bmp";
                     desktop_draw();
                     return;
                 }
 
-                if (mouse_x >= win->x + 10 &&
-                    mouse_x < win->x + 120 &&
-                    mouse_y >= win->y + 287 &&
-                    mouse_y < win->y + 340)
+                if (mouse_x >= win->x + 10 && mouse_x < win->x + 120 &&
+                    mouse_y >= win->y + 287 && mouse_y < win->y + 340)
                 {
                     settings_page = SETTINGS_MAIN;
                     desktop_draw();
@@ -3278,10 +3300,8 @@ static void window_manager_mouse_down(void)
             }
             else if (settings_page == SETTINGS_ABOUT)
             {
-                if (mouse_x >= win->x + 10 &&
-                    mouse_x < win->x + 120 &&
-                    mouse_y >= win->y + 275 &&
-                    mouse_y < win->y + 325)
+                if (mouse_x >= win->x + 10 && mouse_x < win->x + 120 &&
+                    mouse_y >= win->y + 275 && mouse_y < win->y + 325)
                 {
                     settings_page = SETTINGS_MAIN;
                     desktop_draw();
@@ -3291,105 +3311,95 @@ static void window_manager_mouse_down(void)
         }
 
         if (mouse_right)
-{
-    files_context_menu = 0;
-
-    int index = window_at(mouse_x, mouse_y);
-
-    if (index == WINDOW_FILES)
-    {
-        Window *win = &windows[index];
-
-        int first_y = win->y + 60;
-
-        if (current_dir != 0)
-            first_y += 24;
-
-        if (mouse_x >= win->x + 10 &&
-            mouse_x < win->x + win->w - 10 &&
-            mouse_y >= first_y)
         {
-            int row =
-                (mouse_y - first_y) / 24;
+            files_context_menu = 0;
 
-            int visible_row = 0;
+            int idx = window_at(mouse_x, mouse_y);
 
-            for (int i = 0; i < FS_MAX_ENTRIES; i++)
+            if (idx == WINDOW_FILES)
             {
-                struct fs_entry entry;
+                Window *w = &windows[idx];
 
-                if (!fs_read_entry(i, &entry))
-                    continue;
+                int first_y = w->y + 60;
 
-                if (!entry.used)
-                    continue;
+                if (current_dir != 0)
+                    first_y += 24;
 
-                if (i == 0)
-                    continue;
-
-                if (entry.parent != current_dir)
-                    continue;
-
-                if (visible_row == row)
+                if (mouse_x >= w->x + 10 && mouse_x < w->x + w->w - 10 && mouse_y >= first_y)
                 {
-                    if (entry.type == FS_FILE &&
-                        entry.parent != 0)
+                    int row = (mouse_y - first_y) / 24;
+                    int visible_row = 0;
+
+                    for (int i = 0; i < FS_MAX_ENTRIES; i++)
                     {
-                        files_context_entry = i;
-                        files_context_x = mouse_x;
-                        files_context_y = mouse_y;
-                        files_context_menu = 1;
+                        struct fs_entry entry;
+
+                        if (!fs_read_entry(i, &entry))
+                            continue;
+
+                        if (!entry.used)
+                            continue;
+
+                        if (i == 0)
+                            continue;
+
+                        if (entry.parent != current_dir)
+                            continue;
+
+                        if (visible_row == row)
+                        {
+                            if (entry.type == FS_FILE && entry.parent != 0)
+                            {
+                                files_context_entry = i;
+                                files_context_x = mouse_x;
+                                files_context_y = mouse_y;
+                                files_context_menu = 1;
+                            }
+
+                            desktop_draw();
+                            return;
+                        }
+
+                        visible_row++;
                     }
-
-                    desktop_draw();
-                    return;
                 }
-
-                visible_row++;
             }
+
+            desktop_draw();
+            return;
         }
-    }
 
-    desktop_draw();
-    return;
-}
+        if (files_context_menu)
+        {
+            if (mouse_x >= files_context_x && mouse_x < files_context_x + 110 &&
+                mouse_y >= files_context_y && mouse_y < files_context_y + 35)
+            {
+                files_delete_entry(files_context_entry);
+            }
 
-if (files_context_menu)
-{
-    if (mouse_x >= files_context_x &&
-        mouse_x < files_context_x + 110 &&
-        mouse_y >= files_context_y &&
-        mouse_y < files_context_y + 35)
-    {
-        files_delete_entry(files_context_entry);
-    }
+            files_context_menu = 0;
+            desktop_draw();
+            return;
+        }
 
-    files_context_menu = 0;
-    desktop_draw();
-    return;
-}
+        if (index == WINDOW_FILES)
+        {
+            if (mouse_x >= win->x + win->w - 110 && mouse_x < win->x + win->w - 15 &&
+                mouse_y >= win->y + 30 && mouse_y < win->y + 55)
+            {
+                files_creating = 1;
+                files_new_name_len = 0;
+                files_new_name[0] = '\0';
+                desktop_draw();
+                return;
+            }
 
-if (index == WINDOW_FILES)
-{
-    if (mouse_x >= win->x + win->w - 110 &&
-        mouse_x < win->x + win->w - 15 &&
-        mouse_y >= win->y + 30 &&
-        mouse_y < win->y + 55)
-    {
-        files_creating = 1;
-        files_new_name_len = 0;
-        files_new_name[0] = '\0';
-        desktop_draw();
-        return;
-    }
             int first_y = win->y + 60;
 
             if (current_dir != 0)
             {
-                if (mouse_x >= win->x + 10 &&
-                    mouse_x < win->x + win->w - 10 &&
-                    mouse_y >= first_y &&
-                    mouse_y < first_y + 24)
+                if (mouse_x >= win->x + 10 && mouse_x < win->x + win->w - 10 &&
+                    mouse_y >= first_y && mouse_y < first_y + 24)
                 {
                     struct fs_entry dir;
 
@@ -3406,13 +3416,9 @@ if (index == WINDOW_FILES)
                 first_y += 24;
             }
 
-            if (mouse_x >= win->x + 10 &&
-                mouse_x < win->x + win->w - 10 &&
-                mouse_y >= first_y)
+            if (mouse_x >= win->x + 10 && mouse_x < win->x + win->w - 10 && mouse_y >= first_y)
             {
-                int row =
-                    (mouse_y - first_y) / 24;
-
+                int row = (mouse_y - first_y) / 24;
                 int visible_row = 0;
 
                 for (int i = 0; i < FS_MAX_ENTRIES; i++)
@@ -3456,33 +3462,136 @@ if (index == WINDOW_FILES)
             return;
         }
 
+        if (index == WINDOW_CALC)
+        {
+            int col = (mouse_x - (win->x + 10)) / 45;
+            int row = (mouse_y - (win->y + 75)) / 45;
+            int dx = (mouse_x - (win->x + 10)) % 45;
+            int dy = (mouse_y - (win->y + 75)) % 45;
+
+            if (col >= 0 && col < 4 && row >= 0 && row < 4 && dx < 40 && dy < 40)
+            {
+                char keys[4][4] = {
+                    {'7', '8', '9', '+'},
+                    {'4', '5', '6', '-'},
+                    {'1', '2', '3', '*'},
+                    {'C', '0', '=', '/'}
+                };
+                char key = keys[row][col];
+
+                if (key >= '0' && key <= '9')
+                {
+                    if (calc_new_number)
+                    {
+                        calc_display[0] = key;
+                        calc_display[1] = '\0';
+                        calc_new_number = 0;
+                    }
+                    else
+                    {
+                        int len = 0;
+                        while (calc_display[len])
+                            len++;
+
+                        if (len < 9)
+                        {
+                            calc_display[len] = key;
+                            calc_display[len + 1] = '\0';
+                        }
+                    }
+                }
+                else if (key == 'C')
+                {
+                    calc_display[0] = '0';
+                    calc_display[1] = '\0';
+                    calc_value1 = 0;
+                    calc_op = 0;
+                    calc_new_number = 1;
+                }
+                else if (key == '+' || key == '-' || key == '*' || key == '/')
+                {
+                    int val = 0;
+
+                    for (int i = 0; calc_display[i]; i++)
+                    {
+                        if (calc_display[i] == '-')
+                            continue;
+                        val = val * 10 + (calc_display[i] - '0');
+                    }
+
+                    if (calc_display[0] == '-')
+                        val = -val;
+
+                    calc_value1 = val;
+                    calc_op = key;
+                    calc_new_number = 1;
+                }
+                else if (key == '=')
+                {
+                    int val = 0;
+
+                    for (int i = 0; calc_display[i]; i++)
+                    {
+                        if (calc_display[i] == '-')
+                            continue;
+                        val = val * 10 + (calc_display[i] - '0');
+                    }
+
+                    if (calc_display[0] == '-')
+                        val = -val;
+
+                    int result = val;
+
+                    if (calc_op == '+')
+                        result = calc_value1 + val;
+                    if (calc_op == '-')
+                        result = calc_value1 - val;
+                    if (calc_op == '*')
+                        result = calc_value1 * val;
+                    if (calc_op == '/')
+                    {
+                        if (val != 0)
+                            result = calc_value1 / val;
+                        else
+                            result = 0;
+                    }
+
+                    calc_int_to_str(result, calc_display);
+                    calc_new_number = 1;
+                    calc_op = 0;
+                }
+
+                desktop_draw();
+                return;
+            }
+
+            return;
+        }
+
         return;
     }
 
-    if (mouse_x >= 30 &&
-        mouse_x < 78 &&
-        mouse_y >= 40 &&
-        mouse_y < 88)
+    if (mouse_x >= 30 && mouse_x < 78 && mouse_y >= 40 && mouse_y < 88)
     {
         window_open(WINDOW_FILES);
         return;
     }
 
-    if (mouse_x >= 30 &&
-        mouse_x < 78 &&
-        mouse_y >= 130 &&
-        mouse_y < 178)
+    if (mouse_x >= 30 && mouse_x < 78 && mouse_y >= 130 && mouse_y < 178)
     {
         window_open(WINDOW_TERM);
         return;
     }
 
-    if (mouse_x >= 120 &&
-        mouse_x < 168 &&
-        mouse_y >= 40 &&
-        mouse_y < 88)
+    if (mouse_x >= 120 && mouse_x < 168 && mouse_y >= 40 && mouse_y < 88)
     {
         window_open(WINDOW_SETTINGS);
+        return;
+    }
+
+    if (mouse_x >= 120 && mouse_x < 168 && mouse_y >= 130 && mouse_y < 178)
+    {
+        window_open(WINDOW_CALC);
         return;
     }
 }
@@ -3599,6 +3708,63 @@ static void window_manager_drag(void)
         win->y = HEIGHT - 42 - win->h;
 }
 
+/* ============================================================
+ * CALCULATOR
+ * ============================================================ */
+
+static void calc_int_to_str(int n, char *buf) {
+    if (n == 0) {
+        buf[0] = '0';
+        buf[1] = '\0';
+        return;
+    }
+    int i = 0, is_neg = 0;
+    if (n < 0) {
+        is_neg = 1;
+        n = -n;
+    }
+    while (n > 0 && i < 14) {
+        buf[i++] = '0' + (n % 10);
+        n /= 10;
+    }
+    if (is_neg) buf[i++] = '-';
+    buf[i] = '\0';
+    
+    for (int j = 0; j < i / 2; j++) {
+        char t = buf[j];
+        buf[j] = buf[i - 1 - j];
+        buf[i - 1 - j] = t;
+    }
+}
+
+static void draw_calculator(void) {
+    Window *win = &windows[WINDOW_CALC];
+    if (!win->open) return;
+
+    draw_window(win->x, win->y, win->w, win->h, win->title, win->active);
+
+    fill_rect(win->x + 10, win->y + 35, 175, 30, 0x000F0F14);
+    draw_string(win->x + 15, win->y + 46, calc_display, WHITE);
+
+    const char* labels[4][4] = {
+        {"7", "8", "9", "+"},
+        {"4", "5", "6", "-"},
+        {"1", "2", "3", "*"},
+        {"C", "0", "=", "/"}
+    };
+
+    for (int row = 0; row < 4; row++) {
+        for (int col = 0; col < 4; col++) {
+            int bx = win->x + 10 + (col * 45);
+            int by = win->y + 75 + (row * 45);
+            
+            fill_rect(bx, by, 40, 40, 0x00304050);
+            rect(bx, by, 40, 40, WINDOW_BORDER);
+            
+            draw_string(bx + 16, by + 16, labels[row][col], WHITE);
+        }
+    }
+}
 
 /* ============================================================
  * FILE MANAGER
@@ -4431,6 +4597,21 @@ static void desktop_draw(void)
         WHITE
     );
 
+    draw_bmp_icon(
+        120,
+        130,
+        "calc.bmp",
+        48
+    );
+
+    draw_centered(
+        100,
+        185,
+        88,
+        "CALC",
+        WHITE
+    );
+
 for (int z = 0; z < WINDOW_COUNT; z++)
 {
     int i = window_z[z];
@@ -4449,6 +4630,9 @@ for (int z = 0; z < WINDOW_COUNT; z++)
 
     if (i == WINDOW_SETTINGS)
         draw_settings();
+
+    if (i == WINDOW_CALC)
+        draw_calculator();
     }
 
 if (files_editor_open)
@@ -4610,49 +4794,50 @@ void shell_ui(void)
 
     while (1) {
 
-if (key_pending)
-{
-    char key = pending_key;
-    key_pending = 0;
+        if (key_pending)
+        {
+            char key = pending_key;
+            key_pending = 0;
 
-    if (files_creating)
-    {
-        if (key == '\n' || key == '\r')
-        {
-            files_finish_create();
-        }
-        else if (key == '\b' || key == 127)
-        {
-            if (files_new_name_len > 0)
+            if (files_creating)
             {
-                files_new_name_len--;
-                files_new_name[files_new_name_len] = '\0';
-                desktop_draw();
+                if (key == '\n' || key == '\r')
+                {
+                    files_finish_create();
+                }
+                else if (key == '\b' || key == 127)
+                {
+                    if (files_new_name_len > 0)
+                    {
+                        files_new_name_len--;
+                        files_new_name[files_new_name_len] = '\0';
+                        desktop_draw();
+                    }
+                }
+                else if (key >= 32 && key <= 126)
+                {
+                    if (files_new_name_len < 31)
+                    {
+                        files_new_name[files_new_name_len++] = key;
+                        files_new_name[files_new_name_len] = '\0';
+                        desktop_draw();
+                    }
+                }
+            }
+            else
+            {
+                shell_process_key(key);
             }
         }
-        else if (key >= 32 && key <= 126)
-        {
-            if (files_new_name_len < 31)
-            {
-                files_new_name[files_new_name_len++] = key;
-                files_new_name[files_new_name_len] = '\0';
-                desktop_draw();
-            }
-        }
-    }
-    else
-    {
-        shell_process_key(key);
-    }
-}
+
         mouse_poll();
 
         rtc_time_t rtc_now;
 
         rtc_get_time(&rtc_now);
 
-        if (rtc_now.minute != clock_last_minute) {
-
+        if (rtc_now.minute != clock_last_minute)
+        {
             clock_last_minute = rtc_now.minute;
 
             fill_rect(
@@ -4667,30 +4852,30 @@ if (key_pending)
         }
 
         if (mouse_right && !old_right)
-{
-    int current_x = mouse_x;
-    int current_y = mouse_y;
+        {
+            int current_x = mouse_x;
+            int current_y = mouse_y;
 
-    mouse_x = old_x;
-    mouse_y = old_y;
-    restore_cursor_background();
+            mouse_x = old_x;
+            mouse_y = old_y;
+            restore_cursor_background();
 
-    mouse_x = current_x;
-    mouse_y = current_y;
+            mouse_x = current_x;
+            mouse_y = current_y;
 
-    window_manager_mouse_down();
+            window_manager_mouse_down();
 
-    desktop_draw();
+            desktop_draw();
 
-    save_cursor_background();
-    draw_mouse_cursor();
+            save_cursor_background();
+            draw_mouse_cursor();
 
-    old_x = mouse_x;
-    old_y = mouse_y;
-}
+            old_x = mouse_x;
+            old_y = mouse_y;
+        }
 
-        if (mouse_left && !old_left) {
-
+        if (mouse_left && !old_left)
+        {
             int current_x = mouse_x;
             int current_y = mouse_y;
 
@@ -4715,49 +4900,62 @@ if (key_pending)
             continue;
         }
 
-        if (mouse_left) {
+        if (mouse_left)
+        {
+            int before_x = 0;
+            int before_y = 0;
 
-            int before_x = windows[
-                active_window >= 0
-                    ? active_window
-                    : 0
-            ].x;
-
-            int before_y = windows[
-                active_window >= 0
-                    ? active_window
-                    : 0
-            ].y;
+            if (active_window >= 0)
+            {
+                before_x = windows[active_window].x;
+                before_y = windows[active_window].y;
+            }
 
             window_manager_drag();
 
             int moved_window = 0;
 
-            if (active_window >= 0) {
+            if (active_window >= 0)
+            {
+                Window *win = &windows[active_window];
 
-                Window *win =
-                    &windows[active_window];
-
-                if (
-                    win->x != before_x ||
-                    win->y != before_y
-                ) {
+                if (win->x != before_x || win->y != before_y)
                     moved_window = 1;
-                }
             }
 
-            if (moved_window) {
-
+            if (moved_window)
+            {
                 int current_x = mouse_x;
                 int current_y = mouse_y;
 
                 mouse_x = old_x;
                 mouse_y = old_y;
-
                 restore_cursor_background();
 
                 mouse_x = current_x;
                 mouse_y = current_y;
+
+                int old_window_x = before_x;
+                int old_window_y = before_y;
+
+                Window *win = &windows[active_window];
+
+                int min_x = old_window_x;
+                int min_y = old_window_y;
+                int max_x = old_window_x + win->w;
+                int max_y = old_window_y + win->h;
+
+                if (win->x < min_x)
+                    min_x = win->x;
+
+                if (win->y < min_y)
+                    min_y = win->y;
+
+                if (win->x + win->w > max_x)
+                    max_x = win->x + win->w;
+
+                if (win->y + win->h > max_y)
+                    max_y = win->y + win->h;
 
                 desktop_draw();
 
@@ -4771,21 +4969,18 @@ if (key_pending)
             }
         }
 
-        if (!mouse_left && old_left) {
+        if (!mouse_left && old_left)
+        {
             window_manager_mouse_up();
         }
 
-        if (
-            mouse_x != old_x ||
-            mouse_y != old_y
-        ) {
-
+        if (mouse_x != old_x || mouse_y != old_y)
+        {
             int current_x = mouse_x;
             int current_y = mouse_y;
 
             mouse_x = old_x;
             mouse_y = old_y;
-
             restore_cursor_background();
 
             mouse_x = current_x;
@@ -4799,5 +4994,6 @@ if (key_pending)
         }
 
         old_left = mouse_left;
+        old_right = mouse_right;
     }
 }

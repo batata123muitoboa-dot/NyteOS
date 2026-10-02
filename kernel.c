@@ -8,6 +8,41 @@
 
 extern void keyboard_stub(void);
 
+extern void exception0(void);
+extern void exception1(void);
+extern void exception2(void);
+extern void exception3(void);
+extern void exception4(void);
+extern void exception5(void);
+extern void exception6(void);
+extern void exception7(void);
+extern void exception8(void);
+extern void exception9(void);
+extern void exception10(void);
+extern void exception11(void);
+extern void exception12(void);
+extern void exception13(void);
+extern void exception14(void);
+extern void exception15(void);
+extern void exception16(void);
+extern void exception17(void);
+extern void exception18(void);
+extern void exception19(void);
+extern void exception20(void);
+extern void exception21(void);
+extern void exception22(void);
+extern void exception23(void);
+extern void exception24(void);
+extern void exception25(void);
+extern void exception26(void);
+extern void exception27(void);
+extern void exception28(void);
+extern void exception29(void);
+extern void exception30(void);
+extern void exception31(void);
+
+extern void nyteos_bsod(uint32_t vector, uint32_t error);
+
 #define BOOT_INFO_ADDR 0x8800
 #define VIDEO_MEMORY 0xB8000
 
@@ -355,22 +390,65 @@ void default_interrupt_handler(void) {
     print("Unhandled Interrupt!\n");
 }
 
+void exception_handler(uint32_t vector, uint32_t error)
+{
+    __asm__ volatile ("cli");
+
+    nyteos_bsod(vector, error);
+
+    while (1)
+        __asm__ volatile ("hlt");
+}
 
 static struct idt_ptr idtp_val;
 
-void init_idt(void) {
-    for (int i = 0; i < 256; i++) {
+void init_idt(void)
+{
+    for (int i = 0; i < 256; i++)
         idt_set_gate(i, 0, 0, 0);
-    }
 
     pic_remap();
 
+    idt_set_gate(0x20, (uint32_t)0, 0x08, 0x8E);
     idt_set_gate(0x21, (uint32_t)keyboard_stub, 0x08, 0x8E);
+
+    idt_set_gate(0,  (uint32_t)exception0,  0x08, 0x8E);
+    idt_set_gate(1,  (uint32_t)exception1,  0x08, 0x8E);
+    idt_set_gate(2,  (uint32_t)exception2,  0x08, 0x8E);
+    idt_set_gate(3,  (uint32_t)exception3, 0x08, 0x8E);
+    idt_set_gate(4,  (uint32_t)exception4, 0x08, 0x8E);
+    idt_set_gate(5,  (uint32_t)exception5, 0x08, 0x8E);
+    idt_set_gate(6,  (uint32_t)exception6, 0x08, 0x8E);
+    idt_set_gate(7,  (uint32_t)exception7, 0x08, 0x8E);
+    idt_set_gate(8,  (uint32_t)exception8, 0x08, 0x8E);
+    idt_set_gate(9,  (uint32_t)exception9, 0x08, 0x8E);
+    idt_set_gate(10, (uint32_t)exception10, 0x08, 0x8E);
+    idt_set_gate(11, (uint32_t)exception11, 0x08, 0x8E);
+    idt_set_gate(12, (uint32_t)exception12, 0x08, 0x8E);
+    idt_set_gate(13, (uint32_t)exception13, 0x08, 0x8E);
+    idt_set_gate(14, (uint32_t)exception14, 0x08, 0x8E);
+    idt_set_gate(15, (uint32_t)exception15, 0x08, 0x8E);
+    idt_set_gate(16, (uint32_t)exception16, 0x08, 0x8E);
+    idt_set_gate(17, (uint32_t)exception17, 0x08, 0x8E);
+    idt_set_gate(18, (uint32_t)exception18, 0x08, 0x8E);
+    idt_set_gate(19, (uint32_t)exception19, 0x08, 0x8E);
+    idt_set_gate(20, (uint32_t)exception20, 0x08, 0x8E);
+    idt_set_gate(21, (uint32_t)exception21, 0x08, 0x8E);
+    idt_set_gate(22, (uint32_t)exception22, 0x08, 0x8E);
+    idt_set_gate(23, (uint32_t)exception23, 0x08, 0x8E);
+    idt_set_gate(24, (uint32_t)exception24, 0x08, 0x8E);
+    idt_set_gate(25, (uint32_t)exception25, 0x08, 0x8E);
+    idt_set_gate(26, (uint32_t)exception26, 0x08, 0x8E);
+    idt_set_gate(27, (uint32_t)exception27, 0x08, 0x8E);
+    idt_set_gate(28, (uint32_t)exception28, 0x08, 0x8E);
+    idt_set_gate(29, (uint32_t)exception29, 0x08, 0x8E);
+    idt_set_gate(30, (uint32_t)exception30, 0x08, 0x8E);
+    idt_set_gate(31, (uint32_t)exception31, 0x08, 0x8E);
 
     idtp_val.limit = sizeof(idt) - 1;
     idtp_val.base = (uint32_t)&idt;
 
-    __asm__ volatile("lidt (%0)" : : "r"(&idtp_val));
+    __asm__ volatile ("lidt (%0)" : : "r"(&idtp_val));
 }
 
 /* ============================================================
