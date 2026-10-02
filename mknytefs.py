@@ -110,6 +110,9 @@ def main():
     if os.path.exists("settings.bmp"):
         files.append(("settings.bmp", 0))
 
+    if os.path.exists("calc.bmp"):
+        files.append(("calc.bmp", 0))
+
     if os.path.exists("dwallpaper.bmp"):
         files.append(("dwallpaper.bmp", 0))
 
