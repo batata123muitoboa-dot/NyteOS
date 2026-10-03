@@ -11,6 +11,8 @@
  * 0x90008 = bpp
  * ------------------------------------------------------------ */
 
+uint32_t *backbuffer = (uint32_t *)0x300000;
+
 static volatile uint32_t framebuffer = 0;
 static volatile uint32_t framebuffer_pitch = 0;
 static volatile uint32_t framebuffer_bpp = 0;
@@ -188,6 +190,16 @@ static inline void outb(uint16_t port, uint8_t value)
  * VBE
  * ============================================================ */
 
+static void swap_buffers(void) {
+    for (int y = 0; y < HEIGHT; y++) {
+        volatile uint32_t *dst = (volatile uint32_t *)(framebuffer + ((uint32_t)y * framebuffer_pitch));
+        uint32_t *src = &backbuffer[y * WIDTH];
+        for (int x = 0; x < WIDTH; x++) {
+            dst[x] = src[x];
+        }
+    }
+}
+
 static void framebuffer_init(void)
 {
     volatile uint32_t *info =
@@ -306,25 +318,9 @@ void nyteos_bsod(uint32_t vector, uint32_t error)
  * PIXEL
  * ============================================================ */
 
-static void putpixel(
-    int x,
-    int y,
-    uint32_t color
-)
-{
-    if (x < 0 || x >= WIDTH)
-        return;
-
-    if (y < 0 || y >= HEIGHT)
-        return;
-
-    volatile uint32_t *pixel =
-        (volatile uint32_t *)
-        (framebuffer +
-         ((uint32_t)y * framebuffer_pitch) +
-         ((uint32_t)x * 4));
-
-    *pixel = color;
+static void putpixel(int x, int y, uint32_t color) {
+    if (x < 0 || x >= WIDTH || y < 0 || y >= HEIGHT) return;
+    backbuffer[y * WIDTH + x] = color;
 }
 
 
@@ -363,18 +359,12 @@ static void fill_rect(
         return;
 
     for (int yy = 0; yy < h; yy++) {
-        volatile uint32_t *dst =
-            (volatile uint32_t *)(
-                framebuffer +
-                ((uint32_t)(y + yy) * framebuffer_pitch) +
-                ((uint32_t)x * 4)
-            );
-
-        for (int xx = 0; xx < w; xx++)
+        uint32_t *dst = &backbuffer[(y + yy) * WIDTH + x];
+        for (int xx = 0; xx < w; xx++) {
             dst[xx] = color;
+        }
     }
 }
-
 
 static void rect(
     int x,
@@ -966,52 +956,35 @@ static uint32_t cursor_background[CURSOR_W * CURSOR_H];
 static int cursor_saved_x = 0;
 static int cursor_saved_y = 0;
 
-static void save_cursor_background(void)
+void save_cursor_background(void)
 {
-    cursor_saved_x = mouse_x;
-    cursor_saved_y = mouse_y;
+    for (int y = 0; y < CURSOR_H; y++)
+    {
+        for (int x = 0; x < CURSOR_W; x++)
+        {
+            int px = mouse_x + x;
+            int py = mouse_y + y;
 
-    for (int y = 0; y < CURSOR_H; y++) {
-        for (int x = 0; x < CURSOR_W; x++) {
-
-            int px = cursor_saved_x + x;
-            int py = cursor_saved_y + y;
-
-            if (px >= 0 && px < WIDTH &&
-                py >= 0 && py < HEIGHT) {
-
-                volatile uint32_t *pixel =
-                    (volatile uint32_t *)
-                    (framebuffer +
-                     py * framebuffer_pitch +
-                     px * 4);
-
-                cursor_background[y * CURSOR_W + x] = *pixel;
-            } else {
-                cursor_background[y * CURSOR_W + x] = 0;
+            if (px >= 0 && px < WIDTH && py >= 0 && py < HEIGHT)
+            {
+                cursor_background[y * CURSOR_W + x] = backbuffer[py * WIDTH + px];
             }
         }
     }
 }
 
-static void restore_cursor_background(void)
+void restore_cursor_background(void)
 {
-    for (int y = 0; y < CURSOR_H; y++) {
-        for (int x = 0; x < CURSOR_W; x++) {
+    for (int y = 0; y < CURSOR_H; y++)
+    {
+        for (int x = 0; x < CURSOR_W; x++)
+        {
+            int px = mouse_x + x;
+            int py = mouse_y + y;
 
-            int px = cursor_saved_x + x;
-            int py = cursor_saved_y + y;
-
-            if (px >= 0 && px < WIDTH &&
-                py >= 0 && py < HEIGHT) {
-
-                volatile uint32_t *pixel =
-                    (volatile uint32_t *)
-                    (framebuffer +
-                     py * framebuffer_pitch +
-                     px * 4);
-
-                *pixel = cursor_background[y * CURSOR_W + x];
+            if (px >= 0 && px < WIDTH && py >= 0 && py < HEIGHT)
+            {
+                backbuffer[py * WIDTH + px] = cursor_background[y * CURSOR_W + x];
             }
         }
     }
@@ -3197,6 +3170,14 @@ static int files_context_entry = -1;
 static int files_context_x = 0;
 static int files_context_y = 0;
 
+static int files_editor_open = 0;
+static int files_editor_entry = -1;
+static int files_editor_x = 120;
+static int files_editor_y = 80;
+static int files_editor_dragging = 0;
+static int files_editor_drag_ox = 0;
+static int files_editor_drag_oy = 0;
+
 static int calc_value1 = 0;
 static char calc_op = 0;
 static char calc_display[16] = "0";
@@ -3568,6 +3549,33 @@ static void window_manager_mouse_down(void)
             return;
         }
 
+        if (files_editor_open)
+{
+    int ew = 560, eh = 400;
+    if (mouse_x >= files_editor_x && mouse_x < files_editor_x + ew &&
+        mouse_y >= files_editor_y && mouse_y < files_editor_y + eh)
+    {
+        if (mouse_x >= files_editor_x + ew - 21 && mouse_x < files_editor_x + ew - 9 &&
+            mouse_y >= files_editor_y + 6 && mouse_y < files_editor_y + 18)
+        {
+            files_editor_open = 0;
+            files_editor_entry = -1;
+            desktop_draw();
+            return;
+        }
+
+        if (mouse_y >= files_editor_y && mouse_y < files_editor_y + 25)
+        {
+            files_editor_dragging = 1;
+            files_editor_drag_ox = mouse_x - files_editor_x;
+            files_editor_drag_oy = mouse_y - files_editor_y;
+            return;
+        }
+
+        return;
+    }
+}
+
         return;
     }
 
@@ -3674,8 +3682,11 @@ static int taskbar_window_at(int x, int y)
 
 static void window_manager_mouse_up(void)
 {
-    for (int i = 0; i < WINDOW_COUNT; i++)
+    for (int i = 0; i < WINDOW_COUNT; i++) {
         windows[i].dragging = 0;
+    }
+
+    files_editor_dragging = 0;
 }
 
 
@@ -3706,6 +3717,20 @@ static void window_manager_drag(void)
 
     if (win->y + win->h > HEIGHT - 42)
         win->y = HEIGHT - 42 - win->h;
+
+    if (files_editor_dragging)
+    {
+        files_editor_x = mouse_x - files_editor_drag_ox;
+        files_editor_y = mouse_y - files_editor_drag_oy;
+
+        if (files_editor_x < 0) files_editor_x = 0;
+        if (files_editor_y < 0) files_editor_y = 0;
+        if (files_editor_x + 560 > WIDTH) files_editor_x = WIDTH - 560;
+        if (files_editor_y + 400 > HEIGHT - 42) files_editor_y = HEIGHT - 42 - 400;
+
+        desktop_draw();
+        return;
+    }
 }
 
 /* ============================================================
@@ -3771,8 +3796,6 @@ static void draw_calculator(void) {
  * ============================================================ */
 
 static char files_view_buffer[513];
-static int files_editor_open = 0;
-static int files_editor_entry = -1;
 static char files_editor_buffer[512];
 static int files_editor_len = 0;
 static int files_editor_cursor = 0;
@@ -4065,6 +4088,9 @@ static void files_open_file(int index)
         return;
 
     if (entry.type == FS_DIR)
+        return;
+
+    if (files_editor_open)
         return;
 
     unsigned char sector[512];
@@ -4638,19 +4664,18 @@ for (int z = 0; z < WINDOW_COUNT; z++)
 if (files_editor_open)
 {
     draw_window(
-        120,
-        80,
+        files_editor_x,
+        files_editor_y,
         560,
         400,
         "FILE",
         1
     );
 
-    int x = 140;
-    int y = 120;
-
+    int x = files_editor_x + 20;
+    int y = files_editor_y + 40;
     int start_x = x;
-    int max_x = 660;
+    int max_x = files_editor_x + 540;
     int char_width = 8;
     int line_height = 16;
 
@@ -4671,27 +4696,17 @@ if (files_editor_open)
             y += line_height;
         }
 
-        if (y >= 425)
+        if (y >= files_editor_y + 345)
             break;
 
-        char text[2];
-
-        text[0] = c;
-        text[1] = '\0';
-
-        draw_string(
-            x,
-            y,
-            text,
-            WHITE
-        );
-
+        char text[2] = {c, '\0'};
+        draw_string(x, y, text, WHITE);
         x += char_width;
     }
 
     draw_string(
-        140,
-        440,
+        files_editor_x + 20,
+        files_editor_y + 360,
         "CTRL+S: SAVE    ESC: CLOSE",
         GRAY
     );
@@ -4794,6 +4809,16 @@ void shell_ui(void)
 
     while (1) {
 
+        int current_x = mouse_x;
+        int current_y = mouse_y;
+
+        mouse_x = old_x;
+        mouse_y = old_y;
+        restore_cursor_background();
+
+        mouse_x = current_x;
+        mouse_y = current_y;
+
         if (key_pending)
         {
             char key = pending_key;
@@ -4833,7 +4858,6 @@ void shell_ui(void)
         mouse_poll();
 
         rtc_time_t rtc_now;
-
         rtc_get_time(&rtc_now);
 
         if (rtc_now.minute != clock_last_minute)
@@ -4851,56 +4875,22 @@ void shell_ui(void)
             draw_clock();
         }
 
+        int skip_drag = 0;
+
         if (mouse_right && !old_right)
         {
-            int current_x = mouse_x;
-            int current_y = mouse_y;
-
-            mouse_x = old_x;
-            mouse_y = old_y;
-            restore_cursor_background();
-
-            mouse_x = current_x;
-            mouse_y = current_y;
-
             window_manager_mouse_down();
-
             desktop_draw();
-
-            save_cursor_background();
-            draw_mouse_cursor();
-
-            old_x = mouse_x;
-            old_y = mouse_y;
         }
 
         if (mouse_left && !old_left)
         {
-            int current_x = mouse_x;
-            int current_y = mouse_y;
-
-            mouse_x = old_x;
-            mouse_y = old_y;
-            restore_cursor_background();
-
-            mouse_x = current_x;
-            mouse_y = current_y;
-
             window_manager_mouse_down();
-
             desktop_draw();
-
-            save_cursor_background();
-            draw_mouse_cursor();
-
-            old_x = mouse_x;
-            old_y = mouse_y;
-            old_left = mouse_left;
-
-            continue;
+            skip_drag = 1;
         }
 
-        if (mouse_left)
+        if (mouse_left && !skip_drag)
         {
             int before_x = 0;
             int before_y = 0;
@@ -4925,16 +4915,6 @@ void shell_ui(void)
 
             if (moved_window)
             {
-                int current_x = mouse_x;
-                int current_y = mouse_y;
-
-                mouse_x = old_x;
-                mouse_y = old_y;
-                restore_cursor_background();
-
-                mouse_x = current_x;
-                mouse_y = current_y;
-
                 int old_window_x = before_x;
                 int old_window_y = before_y;
 
@@ -4958,14 +4938,6 @@ void shell_ui(void)
                     max_y = win->y + win->h;
 
                 desktop_draw();
-
-                save_cursor_background();
-                draw_mouse_cursor();
-
-                old_x = mouse_x;
-                old_y = mouse_y;
-
-                continue;
             }
         }
 
@@ -4974,26 +4946,14 @@ void shell_ui(void)
             window_manager_mouse_up();
         }
 
-        if (mouse_x != old_x || mouse_y != old_y)
-        {
-            int current_x = mouse_x;
-            int current_y = mouse_y;
+        save_cursor_background();
+        draw_mouse_cursor();
 
-            mouse_x = old_x;
-            mouse_y = old_y;
-            restore_cursor_background();
-
-            mouse_x = current_x;
-            mouse_y = current_y;
-
-            save_cursor_background();
-            draw_mouse_cursor();
-
-            old_x = mouse_x;
-            old_y = mouse_y;
-        }
-
+        old_x = mouse_x;
+        old_y = mouse_y;
         old_left = mouse_left;
         old_right = mouse_right;
+
+        swap_buffers();
     }
 }
