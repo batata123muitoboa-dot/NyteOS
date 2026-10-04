@@ -5,6 +5,7 @@
 #include "rtc.h"
 #include "pit.h"
 #include "heap.h"
+#include "speaker.h"
 
 extern void keyboard_stub(void);
 
@@ -43,6 +44,7 @@ extern void exception31(void);
 
 extern void nyteos_bsod(uint32_t vector, uint32_t error);
 
+
 #define BOOT_INFO_ADDR 0x8800
 #define VIDEO_MEMORY 0xB8000
 
@@ -52,10 +54,10 @@ volatile uint32_t framebuffer_bpp;
 
 uint32_t fs_base_lba = 0;
 
-#define FS_START_SECTOR 100
-#define FS_ENTRY_SECTOR 101
-#define FS_BITMAP_SECTOR 117
-#define FS_DATA_SECTOR 118
+#define FS_START_SECTOR   130
+#define FS_ENTRY_SECTOR   131
+#define FS_BITMAP_SECTOR  147
+#define FS_DATA_SECTOR    148
 
 #define FS_MAX_ENTRIES 128
 #define FS_ENTRY_SIZE 64
@@ -271,10 +273,19 @@ volatile int caps_lock = 0;
 void keyboard_handler_main(void)
 {
     unsigned char scancode = inb(0x60);
+    static int is_e0 = 0;
+
+    if (scancode == 0xE0)
+    {
+        is_e0 = 1;
+        outb(0x20, 0x20);
+        return;
+    }
 
     if (scancode == 0x1D)
     {
         ctrl_down = 1;
+        is_e0 = 0;
         outb(0x20, 0x20);
         return;
     }
@@ -282,34 +293,23 @@ void keyboard_handler_main(void)
     if (scancode == 0x9D)
     {
         ctrl_down = 0;
+        is_e0 = 0;
         outb(0x20, 0x20);
         return;
     }
 
-    if (scancode == 0x2A)
+    if (scancode == 0x2A || scancode == 0x36)
     {
         shift_down = 1;
+        is_e0 = 0;
         outb(0x20, 0x20);
         return;
     }
 
-    if (scancode == 0xAA)
+    if (scancode == 0xAA || scancode == 0xB6)
     {
         shift_down = 0;
-        outb(0x20, 0x20);
-        return;
-    }
-
-    if (scancode == 0x36)
-    {
-        shift_down = 1;
-        outb(0x20, 0x20);
-        return;
-    }
-
-    if (scancode == 0xB6)
-    {
-        shift_down = 0;
+        is_e0 = 0;
         outb(0x20, 0x20);
         return;
     }
@@ -317,12 +317,33 @@ void keyboard_handler_main(void)
     if (scancode == 0x3A)
     {
         caps_lock = !caps_lock;
+        is_e0 = 0;
         outb(0x20, 0x20);
         return;
     }
 
     if (scancode & 0x80)
     {
+        is_e0 = 0;
+        outb(0x20, 0x20);
+        return;
+    }
+
+    if (is_e0)
+    {
+        is_e0 = 0;
+
+        if (scancode == 0x48)
+        {
+            pending_key = 17;
+            key_pending = 1;
+        }
+        else if (scancode == 0x50)
+        {
+            pending_key = 18;
+            key_pending = 1;
+        }
+
         outb(0x20, 0x20);
         return;
     }
@@ -631,7 +652,7 @@ unsigned int ata_get_drive_size_mb(uint16_t io, uint8_t drive)
 }
 
 /* ============================================================
-   NyteFS - Leitura, Escrita e Remoção
+   NyteFS
    ============================================================ */
 
 struct fs_entry
@@ -1472,14 +1493,14 @@ void execute_command(char *command)
 
     else if (strcmp(command, "about") == 0)
     {
-        print("NyteOS v0.2\n");
+        print("NyteOS v0.4\n");
         print("32-bit Operating System.\n");
         print("Filesystem: NyteFS\n");
     }
 
     else if (strcmp(command, "version") == 0)
     {
-        print("NyteOS v0.2\n");
+        print("NyteOS v0.4\n");
     }
 
     else if (strcmp(command, "whichdir") == 0)
@@ -2164,6 +2185,21 @@ void kernel_main(void)
     clear_screen();
 
     init_idt();
+
+    speaker_beep(220, 120);
+    speaker_beep(262, 120);
+    speaker_beep(330, 180);
+
+    speaker_beep(392, 220);
+    speaker_beep(330, 120);
+    speaker_beep(262, 120);
+
+    speaker_beep(330, 180);
+    speaker_beep(440, 300);
+
+    speaker_beep(392, 150);
+    speaker_beep(330, 150);
+    speaker_beep(262, 350);
 
     __asm__ volatile ("sti");
 

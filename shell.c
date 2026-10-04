@@ -1,5 +1,6 @@
 #include <stdint.h>
 #include "rtc.h"
+#include "speaker.h"
 
 #define BOOT_INFO_ADDR 0x8800
 
@@ -241,8 +242,8 @@ static void framebuffer_init(void)
 #define DESKTOP_TOP      0x00102030
 #define DESKTOP_BOTTOM   0x001A2D42
 
-#define TASKBAR_COLOR    0x00101018
-#define TASKBAR_BORDER   0x00304050
+#define TASKBAR_COLOR    0x002A2927
+#define TASKBAR_BORDER   0x00454542
 
 #define WINDOW_COLOR     0x001A1A22
 #define WINDOW_BORDER    0x00506070
@@ -323,7 +324,6 @@ static void putpixel(int x, int y, uint32_t color) {
     backbuffer[y * WIDTH + x] = color;
 }
 
-
 /* ============================================================
  * RETÂNGULO
  * ============================================================ */
@@ -400,8 +400,23 @@ static void hline(
     uint32_t color
 )
 {
+    if (y < 0 || y >= HEIGHT || w <= 0)
+        return;
+
+    if (x < 0) {
+        w += x;
+        x = 0;
+    }
+
+    if (x + w > WIDTH)
+        w = WIDTH - x;
+
+    if (w <= 0)
+        return;
+
+    uint32_t *dst = &backbuffer[y * WIDTH + x];
     for (int i = 0; i < w; i++)
-        putpixel(x + i, y, color);
+        dst[i] = color;
 }
 
 
@@ -414,6 +429,63 @@ static void vline(
 {
     for (int i = 0; i < h; i++)
         putpixel(x, y + i, color);
+}
+
+
+/* ============================================================
+ * CÍRCULOS
+ * ============================================================ */
+
+static void draw_circle(
+    int xc,
+    int yc,
+    int r,
+    uint32_t color
+)
+{
+    if (r <= 0)
+        return;
+
+    for (int y = -r; y <= r; y++)
+    {
+        for (int x = -r; x <= r; x++)
+        {
+            if ((x * x + y * y) <= (r * r))
+            {
+                putpixel(
+                    xc + x,
+                    yc + y,
+                    color
+                );
+            }
+        }
+    }
+}
+
+static void fill_circle(
+    int xc,
+    int yc,
+    int r,
+    uint32_t color
+)
+{
+    if (r <= 0)
+        return;
+
+    for (int y = -r; y <= r; y++)
+    {
+        for (int x = -r; x <= r; x++)
+        {
+            if ((x * x + y * y) <= (r * r))
+            {
+                putpixel(
+                    xc + x,
+                    yc + y,
+                    color
+                );
+            }
+        }
+    }
 }
 
 
@@ -887,6 +959,10 @@ static void mouse_init(void)
 
     mouse_read();
 
+    mouse_write(0xF3); mouse_write(200); mouse_read();
+    mouse_write(0xF3); mouse_write(100); mouse_read();
+    mouse_write(0xF3); mouse_write(80);  mouse_read();
+
     mouse_write(0xF4);
 
     mouse_read();
@@ -1162,10 +1238,10 @@ static int load_icon_bmp(
 #define FS_ENTRY_SIZE 64
 #define FS_MAX_ENTRIES 128
 
-#define FS_START_SECTOR  100
-#define FS_ENTRY_SECTOR  101
-#define FS_BITMAP_SECTOR 117
-#define FS_DATA_SECTOR   118
+#define FS_START_SECTOR   130
+#define FS_ENTRY_SECTOR   131
+#define FS_BITMAP_SECTOR  147
+#define FS_DATA_SECTOR    148
 
 static unsigned char bmp_buffer[4096];
 
@@ -1271,12 +1347,6 @@ static void draw_bmp_icon(
     unsigned int colors_used =
         bmp_u32(&bmp_buffer[46]);
 
-    //if (width != 16 ||
-        //height == 0 ||
-        //bpp != 8 ||
-        //compression != 0)
-        //return;
-
     unsigned int palette_count =
         colors_used;
 
@@ -1304,7 +1374,7 @@ static void draw_bmp_icon(
     int scale_x;
     int scale_y;
 
-if (size == -2)
+    if (size == -2)
     {
         draw_width = 800;
         draw_height = 600;
@@ -1312,8 +1382,11 @@ if (size == -2)
         scale_x = draw_width / width;
         scale_y = draw_height / height;
 
-        if (scale_x < 1) scale_x = 1;
-        if (scale_y < 1) scale_y = 1;
+        if (scale_x < 1)
+            scale_x = 1;
+
+        if (scale_y < 1)
+            scale_y = 1;
     }
     else if (size == -1)
     {
@@ -1322,7 +1395,8 @@ if (size == -2)
 
         int scale = sx < sy ? sx : sy;
 
-        if (scale < 1) scale = 1;
+        if (scale < 1)
+            scale = 1;
 
         draw_width = width * scale;
         draw_height = height * scale;
@@ -1348,6 +1422,9 @@ if (size == -2)
 
         x = (800 - draw_width) / 2;
         y = (600 - draw_height) / 2;
+
+        scale_x = 1;
+        scale_y = 1;
     }
     else
     {
@@ -1357,11 +1434,8 @@ if (size == -2)
         draw_width = size;
         draw_height = size;
 
-        scale_x = draw_width / width;
-        scale_y = draw_height / height;
-
-        if (scale_x < 1) scale_x = 1;
-        if (scale_y < 1) scale_y = 1;
+        scale_x = 1;
+        scale_y = 1;
     }
 
     for (int py = 0; py < height; py++)
@@ -1408,13 +1482,38 @@ if (size == -2)
             int dw;
             int dh;
 
-            if (size == -2 || size == -3)
+            if (size == -2 ||
+                size == -3)
             {
-                dx = x + (px * draw_width) / width;
-                dy = y + (py * draw_height) / height;
+                dx =
+                    x + (px * draw_width) / width;
 
-                dw = ((px + 1) * draw_width) / width - dx + x;
-                dh = ((py + 1) * draw_height) / height - dy + y;
+                dy =
+                    y + (py * draw_height) / height;
+
+                dw =
+                    ((px + 1) * draw_width) / width
+                    - (px * draw_width) / width;
+
+                dh =
+                    ((py + 1) * draw_height) / height
+                    - (py * draw_height) / height;
+            }
+            else if (size > 0)
+            {
+                dx =
+                    x + (px * draw_width) / width;
+
+                dy =
+                    y + (py * draw_height) / height;
+
+                dw =
+                    ((px + 1) * draw_width) / width
+                    - (px * draw_width) / width;
+
+                dh =
+                    ((py + 1) * draw_height) / height
+                    - (py * draw_height) / height;
             }
             else
             {
@@ -1423,6 +1522,12 @@ if (size == -2)
                 dw = scale_x;
                 dh = scale_y;
             }
+
+            if (dw < 1)
+                dw = 1;
+
+            if (dh < 1)
+                dh = 1;
 
             fill_rect(
                 dx,
@@ -1542,27 +1647,25 @@ static void draw_window(
         WHITE
     );
 
-    fill_rect(
-        x + w - 65,
-        y + 6,
-        12,
-        12,
-        BLUE
+    fill_circle(
+        x + w - 59,
+        y + 12,
+        6,
+        YELLOW
     );
 
     hline(
         x + w - 62,
         y + 11,
         6,
-        WHITE
+        BLACK
     );
 
-    fill_rect(
-        x + w - 43,
-        y + 6,
-        12,
-        12,
-        BLUE
+    fill_circle(
+        x + w - 37,
+        y + 12,
+        6,
+        GREEN
     );
 
     rect(
@@ -1570,20 +1673,18 @@ static void draw_window(
         y + 9,
         6,
         6,
-        WHITE
+        BLACK
     );
 
-
-    fill_rect(
-        x + w - 21,
-        y + 6,
-        12,
-        12,
+    fill_circle(
+        x + w - 15,
+        y + 12,
+        6,
         RED
     );
 
     draw_string(
-        x + w - 19,
+        x + w - 17,
         y + 8,
         "x",
         WHITE
@@ -1597,6 +1698,14 @@ static void draw_window(
 
 #define FS_FILE 1
 #define FS_DIR  2
+
+#define TERM_HISTORY_MAX 20
+
+static char term_history[TERM_HISTORY_MAX][128];
+static int term_history_count = 0;
+static int term_history_idx = -1;
+
+static int term_scroll_offset = 0;
 
 extern volatile char key_buffer[128];
 
@@ -2064,112 +2173,82 @@ static void shell_cmd_rem(const char *name)
  * WRITE
  * ============================================================ */
 
-static void shell_cmd_write(const char *name)
+static void shell_cmd_write(const char *args)
 {
-    int idx = fs_find(name, current_dir);
+    char filename[32];
+    int i = 0;
+
+    while (args[i] != '\0' && args[i] != ' ' && i < 31)
+    {
+        filename[i] = args[i];
+        i++;
+    }
+    filename[i] = '\0';
+
+    if (filename[0] == '\0')
+    {
+        shell_print("Use: write <file-name> <content>", WHITE);
+        return;
+    }
+
+    const char *content = args + i;
+    while (*content == ' ') content++;
+
+    int idx = fs_find(filename, current_dir);
     struct fs_entry entry;
 
     if (idx == -1)
     {
         idx = fs_find_free_entry();
-
         if (idx == -1)
         {
-            shell_print(
-                "Error: No space for more entries.",
-                RED
-            );
+            shell_print("Error: No space for more entries.", RED);
             return;
         }
 
-        for (int i = 0; i < 32; i++)
-            entry.name[i] = 0;
+        for (int j = 0; j < 32; j++) entry.name[j] = 0;
+        int j = 0;
+        while (filename[j] && j < 31) { entry.name[j] = filename[j]; j++; }
 
-        int i = 0;
-
-        while (name[i] && i < 31)
-        {
-            entry.name[i] = name[i];
-            i++;
-        }
-
-        entry.name[i] = '\0';
         entry.parent = current_dir;
         entry.type = FS_FILE;
         entry.used = 1;
-        entry.start_sector =
-            fs_find_free_data_sector();
+        entry.start_sector = fs_find_free_data_sector();
         entry.sector_count = 1;
     }
     else
     {
         fs_read_entry(idx, &entry);
-
         if (entry.type == FS_DIR)
         {
-            shell_print(
-                "Error: Target is a directory.",
-                RED
-            );
+            shell_print("Error: Target is a directory.", RED);
             return;
         }
-
         if (entry.start_sector == 0)
-        {
-            entry.start_sector =
-                fs_find_free_data_sector();
-        }
+            entry.start_sector = fs_find_free_data_sector();
     }
 
     if (entry.start_sector == (unsigned int)-1)
     {
-        shell_print(
-            "Error: No free data sector.",
-            RED
-        );
+        shell_print("Error: No free data sector.", RED);
         return;
     }
 
-    shell_print(
-        "Type the file content and press ENTER:",
-        WHITE
-    );
-
-    char buffer[512];
-
-    shell_read_line(
-        buffer,
-        sizeof(buffer)
-    );
-
-    for (int i = 0; i < 512; i++)
-        fs_sector[i] =
-            (i < 511) ? buffer[i] : 0;
-
     int len = 0;
+    while (content[len] && len < 511) len++;
 
-    while (buffer[len] &&
-           len < 511)
-        len++;
+    for (int j = 0; j < 512; j++)
+        fs_sector[j] = (j < len) ? content[j] : 0;
 
     entry.size = len;
 
-    if (ata_write_sector(
-            entry.start_sector,
-            fs_sector) &&
-        fs_write_entry(idx, &entry))
+    if (ata_write_sector(entry.start_sector, fs_sector) && fs_write_entry(idx, &entry))
     {
-        shell_print(
-            "Ficheiro guardado com sucesso!",
-            GREEN
-        );
+        shell_print("Wrote file sucessfully.", GREEN);
     }
     else
     {
-        shell_print(
-            "Erro ao guardar ficheiro.",
-            RED
-        );
+        shell_print("Error when writing file.", RED);
     }
 }
 
@@ -2178,48 +2257,39 @@ static void shell_cmd_write(const char *name)
  * EDIT.
  * ============================================================ */
 
+static char files_view_buffer[513];
+static char files_editor_buffer[512];
+static int files_editor_len = 0;
+static int files_editor_cursor = 0;
+static int files_editor_open = 0;
+static int files_editor_entry = -1;
+
 static void shell_cmd_edit(const char *name)
 {
     int idx = fs_find(name, current_dir);
-
     struct fs_entry entry;
-
-    int is_new = 0;
 
     if (idx == -1)
     {
         idx = fs_find_free_entry();
-
         if (idx == -1)
         {
-            shell_print(
-                "Error: No space for more entries.",
-                RED
-            );
+            shell_print("Error: No space for more entries.", RED);
             return;
         }
 
-        is_new = 1;
-
-        for (int i = 0; i < 32; i++)
-            entry.name[i] = 0;
-
+        for (int i = 0; i < 32; i++) entry.name[i] = 0;
         int i = 0;
+        while (name[i] && i < 31) { entry.name[i] = name[i]; i++; }
 
-        while (name[i] && i < 31)
-        {
-            entry.name[i] = name[i];
-            i++;
-        }
-
-        entry.name[i] = '\0';
         entry.parent = current_dir;
         entry.type = FS_FILE;
         entry.used = 1;
-        entry.start_sector =
-            fs_find_free_data_sector();
+        entry.start_sector = fs_find_free_data_sector();
         entry.sector_count = 1;
         entry.size = 0;
+
+        fs_write_entry(idx, &entry);
     }
     else
     {
@@ -2227,110 +2297,42 @@ static void shell_cmd_edit(const char *name)
 
         if (entry.type == FS_DIR)
         {
-            shell_print(
-                "Error: Cannot edit a directory.",
-                RED
-            );
+            shell_print("Error: Cannot edit a directory.", RED);
             return;
         }
 
         if (entry.start_sector == 0)
         {
-            entry.start_sector =
-                fs_find_free_data_sector();
+            entry.start_sector = fs_find_free_data_sector();
+            fs_write_entry(idx, &entry);
         }
     }
 
     if (entry.start_sector == (unsigned int)-1)
     {
-        shell_print(
-            "Error: No free data sector.",
-            RED
-        );
+        shell_print("Error: No free data sector.", RED);
         return;
     }
 
-    shell_print(
-        "=== NyteOS Editor ===",
-        CYAN
-    );
+    files_editor_len = entry.size;
+    if (files_editor_len > 511)
+        files_editor_len = 511;
 
-    shell_print(
-        "ESC = save and exit",
-        GRAY
-    );
-
-    char buffer[512];
-
-    for (int i = 0; i < 512; i++)
-        buffer[i] = 0;
-
-    int len = 0;
-
-    if (!is_new &&
-        entry.size > 0 &&
-        entry.size < 512)
+    if (entry.size > 0)
     {
-        if (ata_read_sector(
-                entry.start_sector,
-                fs_sector))
+        if (ata_read_sector(entry.start_sector, fs_sector))
         {
-            for (unsigned int i = 0;
-                 i < entry.size;
-                 i++)
-            {
-                buffer[i] = fs_sector[i];
-            }
-
-            len = entry.size;
+            for (int i = 0; i < files_editor_len; i++)
+                files_editor_buffer[i] = fs_sector[i];
         }
     }
 
-    while (1)
-    {
-        char c = term_getchar();
+    files_editor_buffer[files_editor_len] = '\0';
+    files_editor_cursor = files_editor_len;
+    files_editor_entry = idx;
+    files_editor_open = 1;
 
-        if (!c)
-            continue;
-
-        if (c == 27)
-            break;
-
-        if (c == '\b')
-        {
-            if (len > 0)
-                len--;
-
-            continue;
-        }
-
-        if (len < 511)
-            buffer[len++] = c;
-    }
-
-    for (int i = 0; i < 512; i++)
-        fs_sector[i] =
-            (i < len) ? buffer[i] : 0;
-
-    entry.size = len;
-
-    if (ata_write_sector(
-            entry.start_sector,
-            fs_sector) &&
-        fs_write_entry(idx, &entry))
-    {
-        shell_print(
-            "File saved succesfully.",
-            GREEN
-        );
-    }
-    else
-    {
-        shell_print(
-            "Error when saving to disk.",
-            RED
-        );
-    }
+    shell_print("Opening editor window...", GREEN);
 }
 
 
@@ -2340,7 +2342,6 @@ static void shell_cmd_edit(const char *name)
 
 static void shell_cmd_status(void)
 {
-
     int used_sectors = 0;
     unsigned char sector_buffer[512];
 
@@ -2349,18 +2350,11 @@ static void shell_cmd_status(void)
         if (ata_read_sector(s, sector_buffer))
         {
             int has_data = 0;
-
             for (int i = 0; i < 512; i++)
             {
-                if (sector_buffer[i] != 0)
-                {
-                    has_data = 1;
-                    break;
-                }
+                if (sector_buffer[i] != 0) { has_data = 1; break; }
             }
-
-            if (has_data)
-                used_sectors++;
+            if (has_data) used_sectors++;
         }
     }
 
@@ -2370,61 +2364,30 @@ static void shell_cmd_status(void)
     {
         for (int i = 0; i < 512; i++)
         {
-            if (fs_bitmap[i] != 0)
-                used_sectors++;
+            if (fs_bitmap[i] != 0) used_sectors++;
         }
     }
 
     int total_bytes_ssd = used_sectors * 512;
     int used_ssd_kb = (total_bytes_ssd + 1023) / 1024;
-
     unsigned int total_ssd_kb = get_total_ssd_kb();
 
-    if (used_ssd_kb > (int)total_ssd_kb)
-        used_ssd_kb = total_ssd_kb;
+    if (used_ssd_kb > (int)total_ssd_kb) used_ssd_kb = total_ssd_kb;
+    int ssd_pct = (total_ssd_kb > 0) ? (used_ssd_kb * 100) / total_ssd_kb : 0;
 
-    int ssd_pct =
-        (total_ssd_kb > 0)
-        ? (used_ssd_kb * 100) / total_ssd_kb
-        : 0;
-
-    unsigned int used_ram_kb =
-        get_used_ram_kb();
+    unsigned int graphics_ram_kb = (800 * 600 * 4 * 2) / 1024;
+    unsigned int used_ram_kb = get_used_ram_kb() + graphics_ram_kb;
 
     unsigned int total_ram_kb = get_total_ram_kb();
+    if (total_ram_kb == 0) total_ram_kb = 640;
+    if (used_ram_kb > total_ram_kb) used_ram_kb = total_ram_kb;
 
-    if (total_ram_kb == 0)
-        total_ram_kb = 640;
+    int ram_pct = (total_ram_kb > 0) ? (used_ram_kb * 100) / total_ram_kb : 0;
 
-    if (used_ram_kb > total_ram_kb)
-        used_ram_kb = total_ram_kb;
+    term_print_line("=== NyteOS Monitor ===", WHITE);
 
-    int ram_pct =
-        (total_ram_kb > 0)
-        ? (used_ram_kb * 100) / total_ram_kb
-        : 0;
-
-
-    term_print_line(
-        "=== NyteOS Monitor ===",
-        WHITE
-    );
-
-    shell_print_two_numbers(
-        "SSD: ",
-        used_ssd_kb,
-        " KB / ",
-        total_ssd_kb,
-        ssd_pct
-    );
-
-    shell_print_two_numbers(
-        "RAM: ",
-        used_ram_kb,
-        " KB / ",
-        total_ram_kb,
-        ram_pct
-    );
+    shell_print_two_numbers("Storage: ", used_ssd_kb, " KB / ", total_ssd_kb, ssd_pct);
+    shell_print_two_numbers("RAM: ", used_ram_kb, " KB / ", total_ram_kb, ram_pct);
 }
 
 
@@ -2582,7 +2545,7 @@ static void term_execute_command(
 
     else if (term_strcmp(command, "about") == 0)
     {
-        shell_print("NyteOS v0.2", WHITE);
+        shell_print("NyteOS v0.4", WHITE);
         shell_print(
             "32-bit Operating System.",
             WHITE
@@ -2596,7 +2559,7 @@ static void term_execute_command(
     else if (term_strcmp(command, "version") == 0)
     {
         shell_print(
-            "NyteOS v0.2",
+            "NyteOS v0.4",
             WHITE
         );
     }
@@ -2923,6 +2886,17 @@ static void term_execute_command(
 
     else if (term_strcmp(command, "reboot") == 0)
     {
+        speaker_beep(440, 180);
+        speaker_beep(392, 150);
+        speaker_beep(330, 180);
+
+        speaker_beep(294, 220);
+        speaker_beep(262, 180);
+        speaker_beep(220, 250);
+
+        speaker_beep(196, 220);
+        speaker_beep(175, 180);
+        speaker_beep(147, 450);
         while (inb(0x64) & 2)
             ;
 
@@ -2950,17 +2924,34 @@ static void draw_terminal(void)
 
     fill_rect(win->x + 2, win->y + 26, win->w - 4, win->h - 28, 0x000F0F14);
 
+    int max_visible_lines = (win->h - 45) / 12;
+    if (max_visible_lines <= 0) max_visible_lines = 1;
+
+    int total_lines = term_line_count;
+    
+    int max_scroll = total_lines - max_visible_lines + 1;
+    if (max_scroll < 0) max_scroll = 0;
+    if (term_scroll_offset > max_scroll) term_scroll_offset = max_scroll;
+    if (term_scroll_offset < 0) term_scroll_offset = 0;
+
+    int start_index = total_lines - max_visible_lines + 1 - term_scroll_offset;
+    if (start_index < 0) start_index = 0;
+
     int start_y = win->y + 32;
-    for (int i = 0; i < term_line_count; i++) {
-        draw_string(win->x + 10, start_y + (i * 12), term_lines[i], term_colors[i]);
+    int line_y = start_y;
+
+    for (int i = start_index; i < total_lines && i < start_index + max_visible_lines; i++)
+    {
+        draw_string(win->x + 10, line_y, term_lines[i], term_colors[i]);
+        line_y += 12;
     }
 
-    int current_y = start_y + (term_line_count * 12);
-    if (current_y < win->y + win->h - 20) {
+    if (term_scroll_offset == 0 && line_y < win->y + win->h - 20)
+    {
         char prompt[128];
         int p = 0;
         const char *base = "nyte:/";
-        
+
         while (*base)
             prompt[p++] = *base++;
 
@@ -2986,13 +2977,13 @@ static void draw_terminal(void)
         prompt[p++] = ' ';
         prompt[p] = '\0';
 
-        draw_string(win->x + 10, current_y, prompt, WHITE);
-        
+        draw_string(win->x + 10, line_y, prompt, WHITE);
+
         int cmd_x = win->x + 10 + (p * 6);
-        draw_string(cmd_x, current_y, term_cmd_buffer, WHITE);
+        draw_string(cmd_x, line_y, term_cmd_buffer, WHITE);
 
         int cursor_x = cmd_x + (term_cmd_len * 6);
-        fill_rect(cursor_x, current_y, 6, 9, WHITE);
+        fill_rect(cursor_x, line_y, 6, 9, WHITE);
     }
 }
 
@@ -3170,8 +3161,6 @@ static int files_context_entry = -1;
 static int files_context_x = 0;
 static int files_context_y = 0;
 
-static int files_editor_open = 0;
-static int files_editor_entry = -1;
 static int files_editor_x = 120;
 static int files_editor_y = 80;
 static int files_editor_dragging = 0;
@@ -3794,11 +3783,6 @@ static void draw_calculator(void) {
 /* ============================================================
  * FILE MANAGER
  * ============================================================ */
-
-static char files_view_buffer[513];
-static char files_editor_buffer[512];
-static int files_editor_len = 0;
-static int files_editor_cursor = 0;
 
 static void files_finish_create(void);
 
@@ -4429,7 +4413,7 @@ static void draw_settings(void)
         draw_string(
             win->x + 20,
             win->y + 185,
-            "Version 0.2",
+            "Version 0.4",
             WHITE
         );
 
@@ -4519,13 +4503,13 @@ static void draw_taskbar(void)
 
     draw_bmp_icon(
         8,
-        y + 7,
+        y + 6,
         "nyteos.bmp",
-        32
+        30
     );
 
     vline(
-        50,
+        46,
         y + 7,
         28,
         TASKBAR_BORDER
@@ -4544,7 +4528,7 @@ static void draw_taskbar(void)
             140,
             28,
             windows[i].active
-                ? DARK_BLUE
+                ? GRAY
                 : TASKBAR_COLOR
         );
 
@@ -4553,7 +4537,7 @@ static void draw_taskbar(void)
             y + 7,
             140,
             28,
-            TASKBAR_BORDER
+            BLACK
         );
 
         draw_string(
@@ -4735,23 +4719,140 @@ static void __attribute__((unused)) desktop_update(void)
 
 static void shell_process_key(char key)
 {
-
-if (files_editor_open)
-{
-    files_editor_key(key);
-    return;
-}
-
-if (files_creating)
-{
-    files_create_key(key);
-    return;
-}
-
-    if (key == '\n')
+    if (files_editor_open)
     {
-        term_cmd_buffer[0] = '\0';
+        files_editor_key(key);
+        return;
+    }
+
+    if (files_creating)
+    {
+        files_create_key(key);
+        return;
+    }
+
+    if ((unsigned char)key == 0x80 || key == 17)
+    {
+        if (term_history_count > 0 && term_history_idx < term_history_count - 1)
+        {
+            term_history_idx++;
+            int h_idx = term_history_count - 1 - term_history_idx;
+            
+            int i = 0;
+            while (term_history[h_idx][i] != '\0')
+            {
+                term_cmd_buffer[i] = term_history[h_idx][i];
+                i++;
+            }
+            term_cmd_buffer[i] = '\0';
+            term_cmd_len = i;
+        }
+        return;
+    }
+
+    if ((unsigned char)key == 0x81 || key == 18)
+    {
+        if (term_history_idx > 0)
+        {
+            term_history_idx--;
+            int h_idx = term_history_count - 1 - term_history_idx;
+
+            int i = 0;
+            while (term_history[h_idx][i] != '\0')
+            {
+                term_cmd_buffer[i] = term_history[h_idx][i];
+                i++;
+            }
+            term_cmd_buffer[i] = '\0';
+            term_cmd_len = i;
+        }
+        else if (term_history_idx == 0)
+        {
+            term_history_idx = -1;
+            term_cmd_buffer[0] = '\0';
+            term_cmd_len = 0;
+        }
+        return;
+    }
+
+    if (key == '\n' || key == '\r')
+    {
+        term_cmd_buffer[term_cmd_len] = '\0';
+
+        if (term_cmd_len > 0)
+        {
+            if (term_history_count < TERM_HISTORY_MAX)
+            {
+                int i = 0;
+                while (term_cmd_buffer[i] != '\0')
+                {
+                    term_history[term_history_count][i] = term_cmd_buffer[i];
+                    i++;
+                }
+                term_history[term_history_count][i] = '\0';
+                term_history_count++;
+            }
+            else
+            {
+                for (int h = 1; h < TERM_HISTORY_MAX; h++)
+                {
+                    for (int c = 0; c < 128; c++)
+                        term_history[h - 1][c] = term_history[h][c];
+                }
+                int i = 0;
+                while (term_cmd_buffer[i] != '\0')
+                {
+                    term_history[TERM_HISTORY_MAX - 1][i] = term_cmd_buffer[i];
+                    i++;
+                }
+                term_history[TERM_HISTORY_MAX - 1][i] = '\0';
+            }
+        }
+
+        term_history_idx = -1;
+        term_scroll_offset = 0;
+
+        char full_line[160];
+        int p = 0;
+        const char *base = "nyte:/";
+
+        while (*base && p < 150)
+            full_line[p++] = *base++;
+
+        if (current_dir != 0)
+        {
+            struct fs_entry entry;
+            if (fs_read_entry(current_dir, &entry))
+            {
+                int i = 0;
+                while (i < 32 && entry.name[i] != '\0' && p < 150)
+                {
+                    full_line[p++] = entry.name[i];
+                    i++;
+                }
+            }
+            else
+            {
+                if (p < 150) full_line[p++] = '?';
+            }
+        }
+
+        if (p < 150) full_line[p++] = '>';
+        if (p < 150) full_line[p++] = ' ';
+
+        int i = 0;
+        while (term_cmd_buffer[i] != '\0' && p < 158)
+        {
+            full_line[p++] = term_cmd_buffer[i++];
+        }
+        full_line[p] = '\0';
+
+        term_print_line(full_line, WHITE);
+
+        term_execute_command(term_cmd_buffer);
+
         term_cmd_len = 0;
+        term_cmd_buffer[0] = '\0';
         return;
     }
 
@@ -4765,10 +4866,13 @@ if (files_creating)
         return;
     }
 
-    if (term_cmd_len < sizeof(term_cmd_buffer) - 1)
+    if (key >= 32 && key <= 126)
     {
-        term_cmd_buffer[term_cmd_len++] = key;
-        term_cmd_buffer[term_cmd_len] = '\0';
+        if (term_cmd_len < sizeof(term_cmd_buffer) - 1)
+        {
+            term_cmd_buffer[term_cmd_len++] = key;
+            term_cmd_buffer[term_cmd_len] = '\0';
+        }
     }
 }
 
@@ -4852,6 +4956,7 @@ void shell_ui(void)
             else
             {
                 shell_process_key(key);
+                desktop_draw();
             }
         }
 

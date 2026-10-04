@@ -203,7 +203,7 @@ align 4
 dap:
     db 0x10
     db 0x00
-    dw 100        ; quantidade de setores, mt importante
+    dw 106        ; quantidade de setores, mt importante
     dw 0x0000
     dw 0x1000
     dq 1
