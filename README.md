@@ -4,9 +4,9 @@ A lightweight Operating System made from scratch using Assembly and C. (beta/exp
 <img src="screenshots/nyteos.png" alt="logo" width="250">
 
 ## Screenshots
-<img src="screenshots/screenshot1.png" alt="screenshot 1" width="450">
+<img src="screenshots/screenshot1.png" alt="screenshot 1" width="600">
 
-<img src="screenshots/screenshot2.png" alt="screenshot 1" width="450">
+<img src="screenshots/screenshot2.png" alt="screenshot 1" width="600">
 
 ## Hardware Requirements
 
