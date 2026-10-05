@@ -1,7 +1,7 @@
 # NyteOS
 A lightweight Operating System made from scratch using Assembly and C. (beta/experimental)
 
-<img src="screenshots/nyteos.png" alt="logo" width="100">
+<img src="screenshots/nyteos.png" alt="logo" width="250">
 
 ## Screenshots
 ![screenshot](screenshots/screenshot1.png)
