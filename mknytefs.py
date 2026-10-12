@@ -92,6 +92,9 @@ def main():
     if os.path.exists("boot.bin"):
         files.append(("boot.bin", 0))
 
+    if os.path.exists("stage2.bin"):
+        files.append(("stage2.bin", 0))
+
     if os.path.exists("entry.bin"):
         files.append(("entry.bin", 0))
 
@@ -136,10 +139,10 @@ def main():
 
         if filename == "boot.bin":
             start_sector = 0
-
         elif filename == "kernel.bin":
             start_sector = 1
-
+        elif filename == "stage2.bin":
+            start_sector = 107
         else:
             start_sector = next_sector
             next_sector += sectors

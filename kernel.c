@@ -1493,14 +1493,14 @@ void execute_command(char *command)
 
     else if (strcmp(command, "about") == 0)
     {
-        print("NyteOS v0.4\n");
+        print("NyteOS v0.4.5\n");
         print("32-bit Operating System.\n");
         print("Filesystem: NyteFS\n");
     }
 
     else if (strcmp(command, "version") == 0)
     {
-        print("NyteOS v0.4\n");
+        print("NyteOS v0.4.5\n");
     }
 
     else if (strcmp(command, "whichdir") == 0)
@@ -2171,7 +2171,10 @@ extern void shell_ui(void);
 
 void kernel_main(void)
 {
-    init_heap();
+    uintptr_t ram_limit =
+        (uintptr_t)(*(volatile uint32_t *)(BOOT_INFO_ADDR + 12)) * 1024;
+
+    init_heap(ram_limit);
     kb_head = 0;
     kb_tail = 0;
     init_stack_tracker();

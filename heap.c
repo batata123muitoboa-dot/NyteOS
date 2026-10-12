@@ -10,11 +10,13 @@ typedef struct header {
 
 static header_t *head = NULL;
 
-void init_heap(void) {
+void init_heap(uintptr_t ram_limit) {
     uintptr_t heap_start = (uintptr_t)&_end;
-    heap_start = (heap_start + 3) & ~3;
 
-    uintptr_t ram_limit = 0x00300000;
+    if (heap_start < 0x100000)
+        heap_start = 0x100000;
+
+    heap_start = (heap_start + 3) & ~(uintptr_t)3;
 
     if (heap_start >= ram_limit) {
         head = NULL;

@@ -1,6 +1,7 @@
 #include <stdint.h>
 #include "rtc.h"
 #include "speaker.h"
+#include "graphics.h"
 
 #define BOOT_INFO_ADDR 0x8800
 
@@ -255,21 +256,6 @@ static void framebuffer_init(void)
  * EXCEPTION HANDLER
  * ============================================================ */
 
-static void fill_rect(
-    int x,
-    int y,
-    int width,
-    int height,
-    uint32_t color
-);
-
-static void draw_string(
-    int x,
-    int y,
-    const char *str,
-    uint32_t color
-);
-
 void nyteos_bsod(uint32_t vector, uint32_t error)
 {
     (void)vector;
@@ -313,563 +299,6 @@ void nyteos_bsod(uint32_t vector, uint32_t error)
     outb(0x64, 0xFE);
 
     while (1);
-}
-
-/* ============================================================
- * PIXEL
- * ============================================================ */
-
-static void putpixel(int x, int y, uint32_t color) {
-    if (x < 0 || x >= WIDTH || y < 0 || y >= HEIGHT) return;
-    backbuffer[y * WIDTH + x] = color;
-}
-
-/* ============================================================
- * RETÂNGULO
- * ============================================================ */
-
-static void fill_rect(
-    int x,
-    int y,
-    int w,
-    int h,
-    uint32_t color
-)
-{
-    if (w <= 0 || h <= 0)
-        return;
-
-    if (x < 0) {
-        w += x;
-        x = 0;
-    }
-
-    if (y < 0) {
-        h += y;
-        y = 0;
-    }
-
-    if (x + w > WIDTH)
-        w = WIDTH - x;
-
-    if (y + h > HEIGHT)
-        h = HEIGHT - y;
-
-    if (w <= 0 || h <= 0)
-        return;
-
-    for (int yy = 0; yy < h; yy++) {
-        uint32_t *dst = &backbuffer[(y + yy) * WIDTH + x];
-        for (int xx = 0; xx < w; xx++) {
-            dst[xx] = color;
-        }
-    }
-}
-
-static void rect(
-    int x,
-    int y,
-    int w,
-    int h,
-    uint32_t color
-)
-{
-    if (w <= 0 || h <= 0)
-        return;
-
-    for (int xx = x; xx < x + w; xx++) {
-        putpixel(xx, y, color);
-        putpixel(xx, y + h - 1, color);
-    }
-
-    for (int yy = y; yy < y + h; yy++) {
-        putpixel(x, yy, color);
-        putpixel(x + w - 1, yy, color);
-    }
-}
-
-
-/* ============================================================
- * LINHAS
- * ============================================================ */
-
-static void hline(
-    int x,
-    int y,
-    int w,
-    uint32_t color
-)
-{
-    if (y < 0 || y >= HEIGHT || w <= 0)
-        return;
-
-    if (x < 0) {
-        w += x;
-        x = 0;
-    }
-
-    if (x + w > WIDTH)
-        w = WIDTH - x;
-
-    if (w <= 0)
-        return;
-
-    uint32_t *dst = &backbuffer[y * WIDTH + x];
-    for (int i = 0; i < w; i++)
-        dst[i] = color;
-}
-
-
-static void vline(
-    int x,
-    int y,
-    int h,
-    uint32_t color
-)
-{
-    for (int i = 0; i < h; i++)
-        putpixel(x, y + i, color);
-}
-
-
-/* ============================================================
- * CÍRCULOS
- * ============================================================ */
-
-static void draw_circle(
-    int xc,
-    int yc,
-    int r,
-    uint32_t color
-)
-{
-    if (r <= 0)
-        return;
-
-    for (int y = -r; y <= r; y++)
-    {
-        for (int x = -r; x <= r; x++)
-        {
-            if ((x * x + y * y) <= (r * r))
-            {
-                putpixel(
-                    xc + x,
-                    yc + y,
-                    color
-                );
-            }
-        }
-    }
-}
-
-static void fill_circle(
-    int xc,
-    int yc,
-    int r,
-    uint32_t color
-)
-{
-    if (r <= 0)
-        return;
-
-    for (int y = -r; y <= r; y++)
-    {
-        for (int x = -r; x <= r; x++)
-        {
-            if ((x * x + y * y) <= (r * r))
-            {
-                putpixel(
-                    xc + x,
-                    yc + y,
-                    color
-                );
-            }
-        }
-    }
-}
-
-
-/* ============================================================
- * FONTE 5x7
- * ============================================================ */
-
-static const uint8_t font5x7[96][7] = {
-
-    /* space */
-    {0,0,0,0,0,0,0},
-
-    /* ! */
-    {4,4,4,4,4,0,4},
-
-    /* " */
-    {10,10,0,0,0,0,0},
-
-    /* # */
-    {10,31,10,10,31,10,0},
-
-    /* $ */
-    {4,15,20,14,5,30,4},
-
-    /* % */
-    {24,25,2,4,8,19,3},
-
-    /* & */
-    {12,18,20,8,21,18,13},
-
-    /* ' */
-    {4,4,0,0,0,0,0},
-
-    /* ( */
-    {2,4,8,8,8,4,2},
-
-    /* ) */
-    {8,4,2,2,2,4,8},
-
-    /* * */
-    {0,4,21,14,21,4,0},
-
-    /* + */
-    {0,4,4,31,4,4,0},
-
-    /* , */
-    {0,0,0,0,4,4,8},
-
-    /* - */
-    {0,0,0,31,0,0,0},
-
-    /* . */
-    {0,0,0,0,0,6,6},
-
-    /* / */
-    {1,2,4,8,16,0,0},
-
-    /* 0 */
-    {14,17,19,21,25,17,14},
-
-    /* 1 */
-    {4,12,4,4,4,4,14},
-
-    /* 2 */
-    {14,17,1,2,4,8,31},
-
-    /* 3 */
-    {30,1,1,14,1,1,30},
-
-    /* 4 */
-    {2,6,10,18,31,2,2},
-
-    /* 5 */
-    {31,16,16,30,1,1,30},
-
-    /* 6 */
-    {14,16,16,30,17,17,14},
-
-    /* 7 */
-    {31,1,2,4,8,8,8},
-
-    /* 8 */
-    {14,17,17,14,17,17,14},
-
-    /* 9 */
-    {14,17,17,15,1,1,14},
-
-    /* : */
-    {0,6,6,0,6,6,0},
-
-    /* ; */
-    {0,6,6,0,6,6,12},
-
-    /* < */
-    {2,4,8,16,8,4,2},
-
-    /* = */
-    {0,0,31,0,31,0,0},
-
-    /* > */
-    {8,4,2,1,2,4,8},
-
-    /* ? */
-    {14,17,1,2,4,0,4},
-
-    /* @ */
-    {14,17,1,13,21,21,14},
-
-    /* A */
-    {14,17,17,31,17,17,17},
-
-    /* B */
-    {30,17,17,30,17,17,30},
-
-    /* C */
-    {14,17,16,16,16,17,14},
-
-    /* D */
-    {30,17,17,17,17,17,30},
-
-    /* E */
-    {31,16,16,30,16,16,31},
-
-    /* F */
-    {31,16,16,30,16,16,16},
-
-    /* G */
-    {14,17,16,23,17,17,14},
-
-    /* H */
-    {17,17,17,31,17,17,17},
-
-    /* I */
-    {14,4,4,4,4,4,14},
-
-    /* J */
-    {7,2,2,2,2,18,12},
-
-    /* K */
-    {17,18,20,24,20,18,17},
-
-    /* L */
-    {16,16,16,16,16,16,31},
-
-    /* M */
-    {17,27,21,21,17,17,17},
-
-    /* N */
-    {17,25,21,19,17,17,17},
-
-    /* O */
-    {14,17,17,17,17,17,14},
-
-    /* P */
-    {30,17,17,30,16,16,16},
-
-    /* Q */
-    {14,17,17,17,21,18,13},
-
-    /* R */
-    {30,17,17,30,20,18,17},
-
-    /* S */
-    {15,16,16,14,1,1,30},
-
-    /* T */
-    {31,4,4,4,4,4,4},
-
-    /* U */
-    {17,17,17,17,17,17,14},
-
-    /* V */
-    {17,17,17,17,17,10,4},
-
-    /* W */
-    {17,17,17,21,21,21,10},
-
-    /* X */
-    {17,17,10,4,10,17,17},
-
-    /* Y */
-    {17,17,10,4,4,4,4},
-
-    /* Z */
-    {31,1,2,4,8,16,31},
-
-    /* [ */
-    {14,8,8,8,8,8,14},
-
-    /* \ */
-    {16,8,4,2,1,0,0},
-
-    /* ] */
-    {14,2,2,2,2,2,14},
-
-    /* ^ */
-    {4,10,17,0,0,0,0},
-
-    /* _ */
-    {0,0,0,0,0,0,31},
-
-    /* ` */
-    {8,4,2,0,0,0,0},
-
-    /* a */
-    {0,0,14,1,15,17,15},
-
-    /* b */
-    {16,16,22,25,17,17,30},
-
-    /* c */
-    {0,0,14,17,16,17,14},
-
-    /* d */
-    {1,1,13,19,17,17,15},
-
-    /* e */
-    {0,0,14,17,31,16,14},
-
-    /* f */
-    {6,9,8,28,8,8,8},
-
-    /* g */
-    {0,0,15,17,15,1,14},
-
-    /* h */
-    {16,16,22,25,17,17,17},
-
-    /* i */
-    {4,0,12,4,4,4,14},
-
-    /* j */
-    {2,0,6,2,2,18,12},
-
-    /* k */
-    {16,16,18,20,24,20,18},
-
-    /* l */
-    {12,4,4,4,4,4,14},
-
-    /* m */
-    {0,0,26,21,21,21,21},
-
-    /* n */
-    {0,0,22,25,17,17,17},
-
-    /* o */
-    {0,0,14,17,17,17,14},
-
-    /* p */
-    {0,0,30,17,30,16,16},
-
-    /* q */
-    {0,0,15,17,15,1,1},
-
-    /* r */
-    {0,0,22,25,16,16,16},
-
-    /* s */
-    {0,0,15,16,14,1,30},
-
-    /* t */
-    {8,8,28,8,8,9,6},
-
-    /* u */
-    {0,0,17,17,17,19,13},
-
-    /* v */
-    {0,0,17,17,17,10,4},
-
-    /* w */
-    {0,0,17,17,21,21,10},
-
-    /* x */
-    {0,0,17,10,4,10,17},
-
-    /* y */
-    {0,0,17,17,15,1,14},
-
-    /* z */
-    {0,0,31,2,4,8,31},
-
-    /* { */
-    {2,4,4,8,4,4,2},
-
-    /* | */
-    {4,4,4,4,4,4,4},
-
-    /* } */
-    {8,4,4,2,4,4,8},
-
-    /* ~ */
-    {8,21,2,0,0,0,0}
-};
-
-
-/* ============================================================
- * CARACTERE
- * ============================================================ */
-
-static void draw_char(
-    int x,
-    int y,
-    unsigned char c,
-    uint32_t color
-)
-{
-    if (c < 32 || c > 127)
-        c = '?';
-
-    const uint8_t *glyph = font5x7[c - 32];
-
-    for (int row = 0; row < 7; row++) {
-        uint8_t bits = glyph[row];
-        for (int col = 0; col < 5; col++) {
-            if (bits & (1 << (4 - col))) {
-                int px = x + col;
-                int py = y + row;
-                if (px >= 0 && px < 1024 && py >= 0 && py < 768) {
-                    putpixel(px, py, color);
-                }
-            }
-        }
-    }
-}
-
-
-/* ============================================================
- * TEXTO
- * ============================================================ */
-
-static void draw_string(
-    int x,
-    int y,
-    const char *str,
-    uint32_t color
-)
-{
-    while (*str) {
-
-        if (*str == '\n') {
-            y += 10;
-            x = 0;
-        } else {
-            draw_char(x, y, *str, color);
-            x += 6;
-        }
-
-        str++;
-    }
-}
-
-
-/* ============================================================
- * TEXTO CENTRALIZADO
- * ============================================================ */
-
-static void draw_centered(
-    int x,
-    int y,
-    int width,
-    const char *str,
-    uint32_t color
-)
-{
-    int len = 0;
-
-    const char *p = str;
-
-    while (*p++) {
-        len++;
-    }
-
-    int text_width = len * 6;
-
-    int text_x =
-        x + ((width - text_width) / 2);
-
-    draw_string(
-        text_x,
-        y,
-        str,
-        color
-    );
 }
 
 
@@ -1600,24 +1029,22 @@ static void draw_window(
     int active
 )
 {
-
-    fill_rect(
+    fill_rect_alpha(
         x + 6,
         y + 6,
         w,
         h,
-        0x00000000
+        0x00000000,
+        50
     );
-
 
     fill_rect(
         x,
-        y,
+        y + 25,
         w,
-        h,
+        h - 25,
         WINDOW_COLOR
     );
-
 
     rect(
         x,
@@ -1629,15 +1056,15 @@ static void draw_window(
             : WINDOW_BORDER
     );
 
-
-    fill_rect(
+    fill_rect_alpha(
         x + 1,
         y + 1,
         w - 2,
         24,
         active
             ? TITLE_ACTIVE
-            : TITLE_COLOR
+            : TITLE_COLOR,
+        active ? 180 : 140
     );
 
     draw_string(
@@ -2545,7 +1972,7 @@ static void term_execute_command(
 
     else if (term_strcmp(command, "about") == 0)
     {
-        shell_print("NyteOS v0.4", WHITE);
+        shell_print("NyteOS v0.4.5", WHITE);
         shell_print(
             "32-bit Operating System.",
             WHITE
@@ -2559,7 +1986,7 @@ static void term_execute_command(
     else if (term_strcmp(command, "version") == 0)
     {
         shell_print(
-            "NyteOS v0.4",
+            "NyteOS v0.4.5",
             WHITE
         );
     }
@@ -3180,8 +2607,24 @@ static void window_manager_mouse_down(void)
 
     if (task >= 0)
     {
-        windows[task].minimized = 0;
-        window_raise(task);
+        if (!windows[task].open)
+        {
+            window_open(task);
+        }
+        else if (windows[task].minimized)
+        {
+            windows[task].minimized = 0;
+            window_raise(task);
+        }
+        else if (active_window == task)
+        {
+            window_minimize(task);
+        }
+        else
+        {
+            window_raise(task);
+        }
+        desktop_draw();
         return;
     }
 
@@ -3539,56 +2982,32 @@ static void window_manager_mouse_down(void)
         }
 
         if (files_editor_open)
-{
-    int ew = 560, eh = 400;
-    if (mouse_x >= files_editor_x && mouse_x < files_editor_x + ew &&
-        mouse_y >= files_editor_y && mouse_y < files_editor_y + eh)
-    {
-        if (mouse_x >= files_editor_x + ew - 21 && mouse_x < files_editor_x + ew - 9 &&
-            mouse_y >= files_editor_y + 6 && mouse_y < files_editor_y + 18)
         {
-            files_editor_open = 0;
-            files_editor_entry = -1;
-            desktop_draw();
-            return;
+            int ew = 560, eh = 400;
+            if (mouse_x >= files_editor_x && mouse_x < files_editor_x + ew &&
+                mouse_y >= files_editor_y && mouse_y < files_editor_y + eh)
+            {
+                if (mouse_x >= files_editor_x + ew - 21 && mouse_x < files_editor_x + ew - 9 &&
+                    mouse_y >= files_editor_y + 6 && mouse_y < files_editor_y + 18)
+                {
+                    files_editor_open = 0;
+                    files_editor_entry = -1;
+                    desktop_draw();
+                    return;
+                }
+
+                if (mouse_y >= files_editor_y && mouse_y < files_editor_y + 25)
+                {
+                    files_editor_dragging = 1;
+                    files_editor_drag_ox = mouse_x - files_editor_x;
+                    files_editor_drag_oy = mouse_y - files_editor_y;
+                    return;
+                }
+
+                return;
+            }
         }
 
-        if (mouse_y >= files_editor_y && mouse_y < files_editor_y + 25)
-        {
-            files_editor_dragging = 1;
-            files_editor_drag_ox = mouse_x - files_editor_x;
-            files_editor_drag_oy = mouse_y - files_editor_y;
-            return;
-        }
-
-        return;
-    }
-}
-
-        return;
-    }
-
-    if (mouse_x >= 30 && mouse_x < 78 && mouse_y >= 40 && mouse_y < 88)
-    {
-        window_open(WINDOW_FILES);
-        return;
-    }
-
-    if (mouse_x >= 30 && mouse_x < 78 && mouse_y >= 130 && mouse_y < 178)
-    {
-        window_open(WINDOW_TERM);
-        return;
-    }
-
-    if (mouse_x >= 120 && mouse_x < 168 && mouse_y >= 40 && mouse_y < 88)
-    {
-        window_open(WINDOW_SETTINGS);
-        return;
-    }
-
-    if (mouse_x >= 120 && mouse_x < 168 && mouse_y >= 130 && mouse_y < 178)
-    {
-        window_open(WINDOW_CALC);
         return;
     }
 }
@@ -3648,21 +3067,18 @@ static int taskbar_window_at(int x, int y)
     if (y < bar_y)
         return -1;
 
-    int task_x = 104;
+    int task_x = 60;
 
     for (int i = 0; i < WINDOW_COUNT; i++) {
 
-        if (!windows[i].open)
-            continue;
-
         if (
             x >= task_x &&
-            x < task_x + 140
+            x < task_x + 36
         ) {
             return i;
         }
 
-        task_x += 146;
+        task_x += 42;
     }
 
     return -1;
@@ -4413,7 +3829,7 @@ static void draw_settings(void)
         draw_string(
             win->x + 20,
             win->y + 185,
-            "Version 0.4",
+            "Version 0.4.5",
             WHITE
         );
 
@@ -4517,37 +3933,33 @@ static void draw_taskbar(void)
 
     int task_x = 60;
 
+    const char *icon_names[WINDOW_COUNT] = {
+        "files.bmp",
+        "term.bmp",
+        "settings.bmp",
+        "calc.bmp"
+    };
+
     for (int i = 0; i < WINDOW_COUNT; i++)
     {
-        if (!windows[i].open)
-            continue;
-
         fill_rect(
             task_x,
             y + 7,
-            140,
+            36,
             28,
             windows[i].active
                 ? GRAY
                 : TASKBAR_COLOR
         );
 
-        rect(
-            task_x,
-            y + 7,
-            140,
-            28,
-            BLACK
-        );
+        draw_bmp_icon(task_x + 6, y + 9, icon_names[i], 24);
 
-        draw_string(
-            task_x + 10,
-            y + 17,
-            windows[i].title,
-            WHITE
-        );
+        if (windows[i].open)
+        {
+            fill_rect(task_x + 16, y + 37, 4, 2, WHITE);
+        }
 
-        task_x += 146;
+        task_x += 42;
     }
 
     draw_clock();
@@ -4561,66 +3973,6 @@ static void draw_taskbar(void)
 static void desktop_draw(void)
 {
     draw_wallpaper();
-
-    draw_bmp_icon(
-        30,
-        40,
-        "files.bmp",
-        48
-    );
-
-    draw_centered(
-        10,
-        95,
-        88,
-        "FILES",
-        WHITE
-    );
-
-    draw_bmp_icon(
-        30,
-        130,
-        "term.bmp",
-        48
-    );
-
-    draw_centered(
-        10,
-        185,
-        88,
-        "TERM",
-        WHITE
-    );
-
-    draw_bmp_icon(
-        120,
-        40,
-        "settings.bmp",
-        48
-    );
-
-    draw_centered(
-        100,
-        95,
-        88,
-        "SETTINGS",
-        WHITE
-    );
-
-    draw_bmp_icon(
-        120,
-        130,
-        "calc.bmp",
-        48
-    );
-
-    draw_centered(
-        100,
-        185,
-        88,
-        "CALC",
-        WHITE
-    );
 
 for (int z = 0; z < WINDOW_COUNT; z++)
 {
@@ -5008,41 +4360,14 @@ void shell_ui(void)
 
             window_manager_drag();
 
-            int moved_window = 0;
-
             if (active_window >= 0)
             {
                 Window *win = &windows[active_window];
 
                 if (win->x != before_x || win->y != before_y)
-                    moved_window = 1;
-            }
-
-            if (moved_window)
-            {
-                int old_window_x = before_x;
-                int old_window_y = before_y;
-
-                Window *win = &windows[active_window];
-
-                int min_x = old_window_x;
-                int min_y = old_window_y;
-                int max_x = old_window_x + win->w;
-                int max_y = old_window_y + win->h;
-
-                if (win->x < min_x)
-                    min_x = win->x;
-
-                if (win->y < min_y)
-                    min_y = win->y;
-
-                if (win->x + win->w > max_x)
-                    max_x = win->x + win->w;
-
-                if (win->y + win->h > max_y)
-                    max_y = win->y + win->h;
-
-                desktop_draw();
+                {
+                    desktop_draw();
+                }
             }
         }
 
