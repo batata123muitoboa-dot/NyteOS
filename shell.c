@@ -23,6 +23,8 @@ extern volatile char key_buffer[128];
 extern volatile int kb_head;
 extern volatile int kb_tail;
 
+extern int keyboard_pop(char *key);
+
 extern int ata_read_sector(unsigned int lba, unsigned char *buffer);
 
 extern void cmd_write(const char *name);
@@ -261,10 +263,12 @@ void nyteos_bsod(uint32_t vector, uint32_t error)
     (void)vector;
     (void)error;
 
+    asm volatile("cli");
+
     framebuffer_init();
 
     if (framebuffer == 0)
-        while (1);
+        while (1) { asm volatile("hlt"); }
 
     fill_rect(0, 0, 800, 600, DARK_BLUE);
 
@@ -276,29 +280,19 @@ void nyteos_bsod(uint32_t vector, uint32_t error)
 
     int x = (800 - len * 7) / 2;
 
-    draw_string(x, 270, msg, WHITE);
+    draw_string(x, 270, msg, WHITE, FONT_DEFAULT);
 
     draw_string(
         300,
         310,
-        "Press any key to restart.",
-        WHITE
+        "System halted due to hardware exception.",
+        WHITE,
+        FONT_DEFAULT
     );
 
-    while (inb(0x64) & 1)
-        (void)inb(0x60);
-
-    while (!(inb(0x64) & 1))
-        ;
-
-    (void)inb(0x60);
-
-    while (inb(0x64) & 2)
-        ;
-
-    outb(0x64, 0xFE);
-
-    while (1);
+    while (1) {
+        asm volatile("hlt");
+    }
 }
 
 
@@ -597,7 +591,8 @@ static void draw_icon(
         y + 55,
         88,
         label,
-        WHITE
+        WHITE,
+        FONT_DEFAULT
     );
 }
 
@@ -1071,7 +1066,8 @@ static void draw_window(
         x + 8,
         y + 9,
         title,
-        WHITE
+        WHITE,
+        FONT_DEFAULT
     );
 
     fill_circle(
@@ -1114,7 +1110,8 @@ static void draw_window(
         x + w - 17,
         y + 8,
         "x",
-        WHITE
+        WHITE,
+        FONT_DEFAULT
     );
 }
 
@@ -1972,7 +1969,7 @@ static void term_execute_command(
 
     else if (term_strcmp(command, "about") == 0)
     {
-        shell_print("NyteOS v0.4.5", WHITE);
+        shell_print("NyteOS v0.5", WHITE);
         shell_print(
             "32-bit Operating System.",
             WHITE
@@ -1986,7 +1983,7 @@ static void term_execute_command(
     else if (term_strcmp(command, "version") == 0)
     {
         shell_print(
-            "NyteOS v0.4.5",
+            "NyteOS v0.5",
             WHITE
         );
     }
@@ -2369,7 +2366,7 @@ static void draw_terminal(void)
 
     for (int i = start_index; i < total_lines && i < start_index + max_visible_lines; i++)
     {
-        draw_string(win->x + 10, line_y, term_lines[i], term_colors[i]);
+        draw_string(win->x + 10, line_y, term_lines[i], term_colors[i], FONT_DEFAULT);
         line_y += 12;
     }
 
@@ -2404,10 +2401,10 @@ static void draw_terminal(void)
         prompt[p++] = ' ';
         prompt[p] = '\0';
 
-        draw_string(win->x + 10, line_y, prompt, WHITE);
+        draw_string(win->x + 10, line_y, prompt, WHITE, FONT_DEFAULT);
 
         int cmd_x = win->x + 10 + (p * 6);
-        draw_string(cmd_x, line_y, term_cmd_buffer, WHITE);
+        draw_string(cmd_x, line_y, term_cmd_buffer, WHITE, FONT_DEFAULT);
 
         int cursor_x = cmd_x + (term_cmd_len * 6);
         fill_rect(cursor_x, line_y, 6, 9, WHITE);
@@ -2603,7 +2600,21 @@ static void calc_int_to_str(int n, char *buf);
 
 static void window_manager_mouse_down(void)
 {
-    int task = taskbar_window_at(mouse_x, mouse_y);
+    int bar_y = HEIGHT - 42;
+    int total_width = WINDOW_COUNT * 42 - 6;
+    int task_start = (WIDTH - total_width) / 2;
+
+    int task = -1;
+
+    if (mouse_y >= bar_y + 7 && mouse_y < bar_y + 35 &&
+        mouse_x >= task_start && mouse_x < task_start + total_width)
+    {
+        int offset = mouse_x - task_start;
+        int index = offset / 42;
+
+        if (index >= 0 && index < WINDOW_COUNT && offset % 42 < 36)
+            task = index;
+    }
 
     if (task >= 0)
     {
@@ -2624,13 +2635,14 @@ static void window_manager_mouse_down(void)
         {
             window_raise(task);
         }
+
         desktop_draw();
         return;
     }
 
     int index = window_at(mouse_x, mouse_y);
 
-    if (index >= 0)
+    if (index >= 0 && index < WINDOW_COUNT)
     {
         Window *win = &windows[index];
 
@@ -2657,7 +2669,7 @@ static void window_manager_mouse_down(void)
         if (point_in_titlebar(win, mouse_x, mouse_y))
         {
             win->dragging = 1;
-            windows[index].active = 1;
+            win->active = 1;
 
             win->drag_offset_x = mouse_x - win->x;
             win->drag_offset_y = mouse_y - win->y;
@@ -2729,7 +2741,8 @@ static void window_manager_mouse_down(void)
 
             int idx = window_at(mouse_x, mouse_y);
 
-            if (idx == WINDOW_FILES)
+            if (idx == WINDOW_FILES &&
+                idx >= 0 && idx < WINDOW_COUNT)
             {
                 Window *w = &windows[idx];
 
@@ -2738,7 +2751,9 @@ static void window_manager_mouse_down(void)
                 if (current_dir != 0)
                     first_y += 24;
 
-                if (mouse_x >= w->x + 10 && mouse_x < w->x + w->w - 10 && mouse_y >= first_y)
+                if (mouse_x >= w->x + 10 &&
+                    mouse_x < w->x + w->w - 10 &&
+                    mouse_y >= first_y)
                 {
                     int row = (mouse_y - first_y) / 24;
                     int visible_row = 0;
@@ -2750,10 +2765,7 @@ static void window_manager_mouse_down(void)
                         if (!fs_read_entry(i, &entry))
                             continue;
 
-                        if (!entry.used)
-                            continue;
-
-                        if (i == 0)
+                        if (!entry.used || i == 0)
                             continue;
 
                         if (entry.parent != current_dir)
@@ -2784,8 +2796,10 @@ static void window_manager_mouse_down(void)
 
         if (files_context_menu)
         {
-            if (mouse_x >= files_context_x && mouse_x < files_context_x + 110 &&
-                mouse_y >= files_context_y && mouse_y < files_context_y + 35)
+            if (mouse_x >= files_context_x &&
+                mouse_x < files_context_x + 110 &&
+                mouse_y >= files_context_y &&
+                mouse_y < files_context_y + 35)
             {
                 files_delete_entry(files_context_entry);
             }
@@ -2797,12 +2811,15 @@ static void window_manager_mouse_down(void)
 
         if (index == WINDOW_FILES)
         {
-            if (mouse_x >= win->x + win->w - 110 && mouse_x < win->x + win->w - 15 &&
-                mouse_y >= win->y + 30 && mouse_y < win->y + 55)
+            if (mouse_x >= win->x + win->w - 110 &&
+                mouse_x < win->x + win->w - 15 &&
+                mouse_y >= win->y + 30 &&
+                mouse_y < win->y + 55)
             {
                 files_creating = 1;
                 files_new_name_len = 0;
                 files_new_name[0] = '\0';
+
                 desktop_draw();
                 return;
             }
@@ -2811,8 +2828,10 @@ static void window_manager_mouse_down(void)
 
             if (current_dir != 0)
             {
-                if (mouse_x >= win->x + 10 && mouse_x < win->x + win->w - 10 &&
-                    mouse_y >= first_y && mouse_y < first_y + 24)
+                if (mouse_x >= win->x + 10 &&
+                    mouse_x < win->x + win->w - 10 &&
+                    mouse_y >= first_y &&
+                    mouse_y < first_y + 24)
                 {
                     struct fs_entry dir;
 
@@ -2829,7 +2848,9 @@ static void window_manager_mouse_down(void)
                 first_y += 24;
             }
 
-            if (mouse_x >= win->x + 10 && mouse_x < win->x + win->w - 10 && mouse_y >= first_y)
+            if (mouse_x >= win->x + 10 &&
+                mouse_x < win->x + win->w - 10 &&
+                mouse_y >= first_y)
             {
                 int row = (mouse_y - first_y) / 24;
                 int visible_row = 0;
@@ -2841,10 +2862,7 @@ static void window_manager_mouse_down(void)
                     if (!fs_read_entry(i, &entry))
                         continue;
 
-                    if (!entry.used)
-                        continue;
-
-                    if (i == 0)
+                    if (!entry.used || i == 0)
                         continue;
 
                     if (entry.parent != current_dir)
@@ -2882,7 +2900,9 @@ static void window_manager_mouse_down(void)
             int dx = (mouse_x - (win->x + 10)) % 45;
             int dy = (mouse_y - (win->y + 75)) % 45;
 
-            if (col >= 0 && col < 4 && row >= 0 && row < 4 && dx < 40 && dy < 40)
+            if (col >= 0 && col < 4 &&
+                row >= 0 && row < 4 &&
+                dx < 40 && dy < 40)
             {
                 char keys[4][4] = {
                     {'7', '8', '9', '+'},
@@ -2890,6 +2910,7 @@ static void window_manager_mouse_down(void)
                     {'1', '2', '3', '*'},
                     {'C', '0', '=', '/'}
                 };
+
                 char key = keys[row][col];
 
                 if (key >= '0' && key <= '9')
@@ -2903,6 +2924,7 @@ static void window_manager_mouse_down(void)
                     else
                     {
                         int len = 0;
+
                         while (calc_display[len])
                             len++;
 
@@ -2921,7 +2943,8 @@ static void window_manager_mouse_down(void)
                     calc_op = 0;
                     calc_new_number = 1;
                 }
-                else if (key == '+' || key == '-' || key == '*' || key == '/')
+                else if (key == '+' || key == '-' ||
+                         key == '*' || key == '/')
                 {
                     int val = 0;
 
@@ -2929,6 +2952,7 @@ static void window_manager_mouse_down(void)
                     {
                         if (calc_display[i] == '-')
                             continue;
+
                         val = val * 10 + (calc_display[i] - '0');
                     }
 
@@ -2947,6 +2971,7 @@ static void window_manager_mouse_down(void)
                     {
                         if (calc_display[i] == '-')
                             continue;
+
                         val = val * 10 + (calc_display[i] - '0');
                     }
 
@@ -2957,10 +2982,13 @@ static void window_manager_mouse_down(void)
 
                     if (calc_op == '+')
                         result = calc_value1 + val;
+
                     if (calc_op == '-')
                         result = calc_value1 - val;
+
                     if (calc_op == '*')
                         result = calc_value1 * val;
+
                     if (calc_op == '/')
                     {
                         if (val != 0)
@@ -2983,12 +3011,18 @@ static void window_manager_mouse_down(void)
 
         if (files_editor_open)
         {
-            int ew = 560, eh = 400;
-            if (mouse_x >= files_editor_x && mouse_x < files_editor_x + ew &&
-                mouse_y >= files_editor_y && mouse_y < files_editor_y + eh)
+            int ew = 560;
+            int eh = 400;
+
+            if (mouse_x >= files_editor_x &&
+                mouse_x < files_editor_x + ew &&
+                mouse_y >= files_editor_y &&
+                mouse_y < files_editor_y + eh)
             {
-                if (mouse_x >= files_editor_x + ew - 21 && mouse_x < files_editor_x + ew - 9 &&
-                    mouse_y >= files_editor_y + 6 && mouse_y < files_editor_y + 18)
+                if (mouse_x >= files_editor_x + ew - 21 &&
+                    mouse_x < files_editor_x + ew - 9 &&
+                    mouse_y >= files_editor_y + 6 &&
+                    mouse_y < files_editor_y + 18)
                 {
                     files_editor_open = 0;
                     files_editor_entry = -1;
@@ -2996,7 +3030,8 @@ static void window_manager_mouse_down(void)
                     return;
                 }
 
-                if (mouse_y >= files_editor_y && mouse_y < files_editor_y + 25)
+                if (mouse_y >= files_editor_y &&
+                    mouse_y < files_editor_y + 25)
                 {
                     files_editor_dragging = 1;
                     files_editor_drag_ox = mouse_x - files_editor_x;
@@ -3174,7 +3209,7 @@ static void draw_calculator(void) {
     draw_window(win->x, win->y, win->w, win->h, win->title, win->active);
 
     fill_rect(win->x + 10, win->y + 35, 175, 30, 0x000F0F14);
-    draw_string(win->x + 15, win->y + 46, calc_display, WHITE);
+    draw_string(win->x + 15, win->y + 46, calc_display, WHITE, FONT_DEFAULT);
 
     const char* labels[4][4] = {
         {"7", "8", "9", "+"},
@@ -3185,13 +3220,16 @@ static void draw_calculator(void) {
 
     for (int row = 0; row < 4; row++) {
         for (int col = 0; col < 4; col++) {
-            int bx = win->x + 10 + (col * 45);
-            int by = win->y + 75 + (row * 45);
-            
-            fill_rect(bx, by, 40, 40, 0x00304050);
-            rect(bx, by, 40, 40, WINDOW_BORDER);
-            
-            draw_string(bx + 16, by + 16, labels[row][col], WHITE);
+            int bx = win->x + 30 + (col * 45);
+            int by = win->y + 95 + (row * 45);
+
+            int cx = bx;
+            int cy = by;
+
+            fill_circle(cx, cy, 19, 0x00304050);
+            draw_circle(cx, cy, 19, WINDOW_BORDER);
+
+            draw_string(cx - 2, cy - 3, labels[row][col], WHITE, FONT_79);
         }
     }
 }
@@ -3261,7 +3299,8 @@ static void draw_files_context_menu(void)
         files_context_x + 12,
         files_context_y + 10,
         "Delete",
-        RED
+        RED,
+        FONT_DEFAULT
     );
 }
 
@@ -3561,7 +3600,8 @@ static void draw_files(void)
     win->x + win->w - 100,
     win->y + 38,
     "+ FILE",
-    GREEN
+    GREEN,
+    FONT_DEFAULT
 );
 
 if (files_creating)
@@ -3578,14 +3618,16 @@ if (files_creating)
         win->x + 40,
         win->y + 102,
         "New file:",
-        WHITE
+        WHITE,
+        FONT_DEFAULT
     );
 
     draw_string(
         win->x + 40,
         win->y + 122,
         files_new_name,
-        WHITE
+        WHITE,
+        FONT_DEFAULT
     );
 }
 
@@ -3593,7 +3635,7 @@ if (files_creating)
 
     if (current_dir != 0)
     {
-        draw_string(win->x + 20, y, "..", YELLOW);
+        draw_string(win->x + 20, y, "..", YELLOW, FONT_DEFAULT);
         y += 24;
     }
 
@@ -3622,7 +3664,8 @@ if (files_creating)
                 win->x + 20,
                 y,
                 "[DIR]",
-                CYAN
+                CYAN,
+                FONT_DEFAULT
             );
 
             folders++;
@@ -3633,7 +3676,8 @@ if (files_creating)
                 win->x + 20,
                 y,
                 "[FILE]",
-                GRAY
+                GRAY,
+                FONT_DEFAULT
             );
 
             files++;
@@ -3643,7 +3687,8 @@ if (files_creating)
             win->x + 70,
             y,
             entry.name,
-            WHITE
+            WHITE,
+            FONT_DEFAULT
         );
 
         y += 24;
@@ -3680,7 +3725,8 @@ if (files_creating)
         win->x + 20,
         win->y + win->h - 25,
         info,
-        GRAY
+        GRAY,
+        FONT_DEFAULT
     );
 }
 
@@ -3717,35 +3763,40 @@ static void draw_settings(void)
             win->x + 22,
             win->y + 94,
             "Settings",
-            WHITE
+            WHITE,
+            FONT_DEFAULT
         );
 
         draw_string(
             win->x + 20,
             win->y + 135,
             "Desktop",
-            WHITE
+            WHITE,
+            FONT_DEFAULT
         );
 
         draw_string(
             win->x + 20,
             win->y + 155,
             "Appearance",
-            WHITE
+            WHITE,
+            FONT_DEFAULT
         );
 
         draw_string(
             win->x + 20,
             win->y + 175,
             "System",
-            WHITE
+            WHITE,
+            FONT_DEFAULT
         );
 
         draw_string(
             win->x + 20,
             win->y + 195,
             "About NyteOS",
-            WHITE
+            WHITE,
+            FONT_DEFAULT
         );
     }
 
@@ -3755,7 +3806,8 @@ static void draw_settings(void)
         win->x + 20,
         win->y + 50,
         "Desktop",
-        WHITE
+        WHITE,
+        FONT_DEFAULT
     );
 
     draw_bmp_icon(
@@ -3769,7 +3821,8 @@ static void draw_settings(void)
         win->x + 140,
         win->y + 120,
         "Default",
-        WHITE
+        WHITE,
+        FONT_DEFAULT
     );
 
     draw_bmp_icon(
@@ -3783,14 +3836,16 @@ static void draw_settings(void)
         win->x + 140,
         win->y + 240,
         "Wallpaper 2",
-        WHITE
+        WHITE,
+        FONT_DEFAULT
     );
 
     draw_string(
         win->x + 20,
         win->y + 285,
         "< Back",
-        CYAN
+        CYAN,
+        FONT_DEFAULT
     );
 
     return;
@@ -3809,56 +3864,64 @@ static void draw_settings(void)
             win->x + 22,
             win->y + 94,
             "NyteOS",
-            WHITE
+            WHITE,
+            FONT_DEFAULT
         );
 
         draw_string(
             win->x + 20,
             win->y + 130,
             "A lightweight operating system",
-            GRAY
+            GRAY,
+            FONT_DEFAULT
         );
 
         draw_string(
             win->x + 20,
             win->y + 150,
             "made from scratch.",
-            GRAY
+            GRAY,
+            FONT_DEFAULT
         );
 
         draw_string(
             win->x + 20,
             win->y + 185,
-            "Version 0.4.5",
-            WHITE
+            "Version 0.5",
+            WHITE,
+            FONT_DEFAULT
         );
 
         draw_string(
             win->x + 20,
             win->y + 205,
             "x86 / 32-bit",
-            WHITE
+            WHITE,
+            FONT_DEFAULT
         );
 
         draw_string(
             win->x + 20,
             win->y + 225,
             "NyteFS",
-            CYAN
+            CYAN,
+            FONT_DEFAULT
         );
 
         draw_string(
             win->x + 20,
             win->y + 245,
-            "Built with C and Assembly",
-            GRAY
+            "Built with love <3",
+            GRAY,
+            FONT_DEFAULT
         );
 
         draw_string(
             win->x + 20,
             win->y + 285,
             "< Back",
-            CYAN
+            CYAN,
+            FONT_DEFAULT
         );
     }
 }
@@ -3888,7 +3951,8 @@ static void draw_clock(void)
         WIDTH - 54,
         HEIGHT - 25,
         clock,
-        WHITE
+        WHITE,
+        FONT_DEFAULT
     );
 }
 
@@ -3931,8 +3995,6 @@ static void draw_taskbar(void)
         TASKBAR_BORDER
     );
 
-    int task_x = 60;
-
     const char *icon_names[WINDOW_COUNT] = {
         "files.bmp",
         "term.bmp",
@@ -3940,8 +4002,10 @@ static void draw_taskbar(void)
         "calc.bmp"
     };
 
-    for (int i = 0; i < WINDOW_COUNT; i++)
-    {
+    int total_width = WINDOW_COUNT * 42 - 6;
+    int task_x = (WIDTH - total_width) / 2;
+
+    for (int i = 0; i < WINDOW_COUNT; i++) {
         fill_rect(
             task_x,
             y + 7,
@@ -3954,8 +4018,7 @@ static void draw_taskbar(void)
 
         draw_bmp_icon(task_x + 6, y + 9, icon_names[i], 24);
 
-        if (windows[i].open)
-        {
+        if (windows[i].open) {
             fill_rect(task_x + 16, y + 37, 4, 2, WHITE);
         }
 
@@ -4036,7 +4099,7 @@ if (files_editor_open)
             break;
 
         char text[2] = {c, '\0'};
-        draw_string(x, y, text, WHITE);
+        draw_string(x, y, text, WHITE, FONT_DEFAULT);
         x += char_width;
     }
 
@@ -4044,7 +4107,8 @@ if (files_editor_open)
         files_editor_x + 20,
         files_editor_y + 360,
         "CTRL+S: SAVE    ESC: CLOSE",
-        GRAY
+        GRAY,
+        FONT_DEFAULT
     );
 }
 
@@ -4228,9 +4292,6 @@ static void shell_process_key(char key)
     }
 }
 
-extern volatile char pending_key;
-extern volatile int key_pending;
-
 void shell_ui(void)
 {
     framebuffer_init();
@@ -4275,11 +4336,10 @@ void shell_ui(void)
         mouse_x = current_x;
         mouse_y = current_y;
 
-        if (key_pending)
-        {
-            char key = pending_key;
-            key_pending = 0;
+        char key;
 
+        while (keyboard_pop(&key))
+        {
             if (files_creating)
             {
                 if (key == '\n' || key == '\r')

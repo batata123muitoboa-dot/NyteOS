@@ -263,8 +263,27 @@ void pic_remap(void) {
     outb(0xA1, 0xFF);
 }
 
-volatile char pending_key = 0;
-volatile int key_pending = 0;
+static inline void keyboard_push(char key)
+{
+    int next = (kb_head + 1) % 128;
+
+    if (next != kb_tail)
+    {
+        key_buffer[kb_head] = key;
+        kb_head = next;
+    }
+}
+
+int keyboard_pop(char *key)
+{
+    if (kb_head == kb_tail)
+        return 0;
+
+    *key = key_buffer[kb_tail];
+    kb_tail = (kb_tail + 1) % 128;
+
+    return 1;
+}
 
 volatile int ctrl_down = 0;
 volatile int shift_down = 0;
@@ -335,13 +354,11 @@ void keyboard_handler_main(void)
 
         if (scancode == 0x48)
         {
-            pending_key = 17;
-            key_pending = 1;
+            keyboard_push(17);
         }
         else if (scancode == 0x50)
         {
-            pending_key = 18;
-            key_pending = 1;
+            keyboard_push(18);
         }
 
         outb(0x20, 0x20);
@@ -377,13 +394,13 @@ void keyboard_handler_main(void)
             if (ctrl_down)
             {
                 if (c == 's')
-                    pending_key = 19;
+                    keyboard_push(19);
                 else if (c == 'c')
-                    pending_key = 3;
+                    keyboard_push(3);
                 else if (c == 'x')
-                    pending_key = 24;
+                    keyboard_push(24);
                 else
-                    pending_key = c;
+                    keyboard_push(c);
             }
             else
             {
@@ -397,10 +414,8 @@ void keyboard_handler_main(void)
                 if (upper)
                     c -= 'a' - 'A';
 
-                pending_key = c;
+                keyboard_push(c);
             }
-
-            key_pending = 1;
         }
     }
 
@@ -925,12 +940,14 @@ unsigned int get_used_ram_kb(void)
 
 char getchar(void)
 {
-    while (kb_head == kb_tail) {
-        __asm__ volatile("hlt"); 
+    while (kb_head == kb_tail)
+    {
+        __asm__ volatile("hlt");
     }
 
     char c = key_buffer[kb_tail];
     kb_tail = (kb_tail + 1) % 128;
+
     return c;
 }
 
@@ -1493,14 +1510,14 @@ void execute_command(char *command)
 
     else if (strcmp(command, "about") == 0)
     {
-        print("NyteOS v0.4.5\n");
+        print("NyteOS v0.5\n");
         print("32-bit Operating System.\n");
         print("Filesystem: NyteFS\n");
     }
 
     else if (strcmp(command, "version") == 0)
     {
-        print("NyteOS v0.4.5\n");
+        print("NyteOS v0.5\n");
     }
 
     else if (strcmp(command, "whichdir") == 0)

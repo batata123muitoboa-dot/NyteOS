@@ -1,3 +1,4 @@
+
 #!/bin/bash
 
 set -e
@@ -5,7 +6,6 @@ set -e
 echo "[+] Compiling bootloader..."
 
 nasm -f bin boot.asm -o boot.bin
-
 nasm -f bin stage2.asm -o stage2.bin
 
 echo "[+] Compiling entry & stubs..."
@@ -22,7 +22,7 @@ echo "[+] Compiling kernel..."
 gcc -m32 -Wall -Wextra -Wno-unused-variable -Wno-unused-function -Wno-sign-compare \
     -ffreestanding -fno-pie -fno-stack-protector \
     -mno-sse -mno-sse2 -mno-mmx -msoft-float \
-    -c kernel.c -o kernel.o
+    -c kernel.c -O3 -Os -o kernel.o
 
 echo "[+] Compiling interface..."
 
@@ -31,34 +31,36 @@ gcc -m32 -Wall -Wextra -Wno-unused-variable -Wno-unused-function -Wno-sign-compa
     -mno-sse -mno-sse2 -mno-mmx -msoft-float \
     -c shell.c -o shell.o
 
+echo "[+] Compiling graphics..."
+
 gcc -m32 -Wall -Wextra -Wno-unused-variable -Wno-unused-function -Wno-sign-compare \
     -ffreestanding -fno-pie -fno-stack-protector \
     -mno-sse -mno-sse2 -mno-mmx -msoft-float \
-    -c graphics.c -o graphics.o
+    -c graphics.c -O3 -Os -o graphics.o
 
 echo "[+] Compiling RTC..."
 
 gcc -m32 -ffreestanding -fno-pie -fno-stack-protector \
     -mno-sse -mno-sse2 -mno-mmx -msoft-float \
-    -c rtc.c -o rtc.o
+    -c rtc.c -O3 -o rtc.o
 
 echo "[+] Compiling PIT..."
 
 gcc -m32 -ffreestanding -fno-pie -fno-stack-protector \
     -mno-sse -mno-sse2 -mno-mmx -msoft-float \
-    -c pit.c -o pit.o
+    -c pit.c -O3 -o pit.o
 
 echo "[+] Compiling Heap..."
 
 gcc -m32 -ffreestanding -fno-pie -fno-stack-protector \
     -mno-sse -mno-sse2 -mno-mmx -msoft-float \
-    -c heap.c -o heap.o
+    -c heap.c -O3 -o heap.o
 
 echo "[+] Compiling Speaker..."
 
 gcc -m32 -ffreestanding -fno-pie -fno-stack-protector \
     -mno-sse -mno-sse2 -mno-mmx -msoft-float \
-    -c speaker.c -o speaker.o
+    -c speaker.c -O3 -o speaker.o
 
 echo "[+] Linking kernel & modules..."
 
@@ -79,9 +81,8 @@ objcopy -O binary kernel.elf kernel.bin
 
 echo "[+] Updating NyteFS image..."
 
-truncate -s 512K nyteos.img
-
 python3 mknytefs.py
+truncate -s 128k nyteos.img
 
 echo "[+] Running QEMU..."
 
@@ -92,7 +93,7 @@ qemu-system-i386 -m 16M \
     -machine pcspk-audiodev=audio0 \
     -serial stdio \
     -d int,cpu_reset \
-    -D qemu.log &
+    -d int,cpu_reset,guest_errors -D qemu.log &
 
 QEMU_PID=$!
 

@@ -1,3 +1,4 @@
+```bat
 @echo off
 setlocal
 
@@ -29,7 +30,7 @@ echo [+] Compiling kernel...
 gcc -m32 -Wall -Wextra -Wno-unused-variable -Wno-unused-function -Wno-sign-compare ^
     -ffreestanding -fno-pie -fno-stack-protector ^
     -mno-sse -mno-sse2 -mno-mmx -msoft-float ^
-    -c kernel.c -o kernel.o
+    -c kernel.c -O3 -Os -o kernel.o
 if errorlevel 1 exit /b 1
 
 echo [+] Compiling interface...
@@ -40,38 +41,40 @@ gcc -m32 -Wall -Wextra -Wno-unused-variable -Wno-unused-function -Wno-sign-compa
     -c shell.c -o shell.o
 if errorlevel 1 exit /b 1
 
+echo [+] Compiling graphics...
+
 gcc -m32 -Wall -Wextra -Wno-unused-variable -Wno-unused-function -Wno-sign-compare ^
     -ffreestanding -fno-pie -fno-stack-protector ^
     -mno-sse -mno-sse2 -mno-mmx -msoft-float ^
-    -c graphics.c -o graphics.o
+    -c graphics.c -O3 -Os -o graphics.o
 if errorlevel 1 exit /b 1
 
 echo [+] Compiling RTC...
 
 gcc -m32 -ffreestanding -fno-pie -fno-stack-protector ^
     -mno-sse -mno-sse2 -mno-mmx -msoft-float ^
-    -c rtc.c -o rtc.o
+    -c rtc.c -O3 -o rtc.o
 if errorlevel 1 exit /b 1
 
 echo [+] Compiling PIT...
 
 gcc -m32 -ffreestanding -fno-pie -fno-stack-protector ^
     -mno-sse -mno-sse2 -mno-mmx -msoft-float ^
-    -c pit.c -o pit.o
+    -c pit.c -O3 -o pit.o
 if errorlevel 1 exit /b 1
 
 echo [+] Compiling Heap...
 
 gcc -m32 -ffreestanding -fno-pie -fno-stack-protector ^
     -mno-sse -mno-sse2 -mno-mmx -msoft-float ^
-    -c heap.c -o heap.o
+    -c heap.c -O3 -o heap.o
 if errorlevel 1 exit /b 1
 
 echo [+] Compiling Speaker...
 
 gcc -m32 -ffreestanding -fno-pie -fno-stack-protector ^
     -mno-sse -mno-sse2 -mno-mmx -msoft-float ^
-    -c speaker.c -o speaker.o
+    -c speaker.c -O3 -o speaker.o
 if errorlevel 1 exit /b 1
 
 echo [+] Linking kernel ^& modules...
@@ -97,10 +100,10 @@ if errorlevel 1 exit /b 1
 
 echo [+] Updating NyteFS image...
 
-powershell -Command "$f = [System.IO.File]::OpenWrite('nyteos.img'); $f.SetLength(512KB); $f.Close()"
+%PYTHON% mknytefs.py
 if errorlevel 1 exit /b 1
 
-%PYTHON% mknytefs.py
+powershell -NoProfile -Command "$f = [System.IO.File]::OpenWrite('nyteos.img'); try { $f.SetLength(128KB) } finally { $f.Close() }"
 if errorlevel 1 exit /b 1
 
 echo [+] Running QEMU...
@@ -111,7 +114,7 @@ qemu-system-i386 -m 16M ^
     -audiodev sdl,id=audio0 ^
     -machine pcspk-audiodev=audio0 ^
     -serial stdio ^
-    -d int,cpu_reset ^
+    -d int,cpu_reset,guest_errors ^
     -D qemu.log
 
 endlocal
