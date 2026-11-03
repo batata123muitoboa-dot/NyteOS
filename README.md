@@ -20,7 +20,7 @@ A lightweight Operating System made from scratch using Assembly and C. (beta/exp
 - CPU: Intel Core 2 Duo E8400 or better
 - RAM: 16 MB DDR2 or more/better
 - GPU: Intel GMA X4500 or better
-- Storage: 512KB MB or more
+- Storage: 512 KB or more
 
 ### Architecture
 - x86 (32-bit)
