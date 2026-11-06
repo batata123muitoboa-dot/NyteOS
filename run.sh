@@ -62,6 +62,13 @@ gcc -m32 -ffreestanding -fno-pie -fno-stack-protector \
     -mno-sse -mno-sse2 -mno-mmx -msoft-float \
     -c speaker.c -O3 -o speaker.o
 
+echo "[+] Compiling 3D software renderer..."
+
+gcc -m32 -Wall -Wextra -ffreestanding -fno-pie \
+    -fno-stack-protector -mno-sse -mno-sse2 \
+    -mno-mmx -msoft-float \
+    -c 3dsoftware.c -Oz -o 3dsoftware.o
+
 echo "[+] Linking kernel & modules..."
 
 ld -m elf_i386 -T kernel.ld \
@@ -75,6 +82,7 @@ ld -m elf_i386 -T kernel.ld \
     pit.o \
     speaker.o \
     graphics.o \
+    3dsoftware.o \
     -o kernel.elf
 
 objcopy -O binary kernel.elf kernel.bin
@@ -88,7 +96,7 @@ echo "[+] Running QEMU..."
 
 qemu-system-i386 -m 16M \
     -drive format=raw,file=nyteos.img \
-    -rtc base=localtime \
+    -rtc base=localtime,clock=host \
     -audiodev pipewire,id=audio0 \
     -machine pcspk-audiodev=audio0 \
     -serial stdio \

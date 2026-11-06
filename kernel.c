@@ -1510,14 +1510,14 @@ void execute_command(char *command)
 
     else if (strcmp(command, "about") == 0)
     {
-        print("NyteOS v0.5\n");
+        print("NyteOS v0.5.1\n");
         print("32-bit Operating System.\n");
         print("Filesystem: NyteFS\n");
     }
 
     else if (strcmp(command, "version") == 0)
     {
-        print("NyteOS v0.5\n");
+        print("NyteOS v0.5.1\n");
     }
 
     else if (strcmp(command, "whichdir") == 0)

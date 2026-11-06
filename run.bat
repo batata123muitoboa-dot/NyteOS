@@ -1,4 +1,3 @@
-```bat
 @echo off
 setlocal
 
@@ -77,6 +76,14 @@ gcc -m32 -ffreestanding -fno-pie -fno-stack-protector ^
     -c speaker.c -O3 -o speaker.o
 if errorlevel 1 exit /b 1
 
+echo [+] Compiling 3D software renderer...
+
+gcc -m32 -Wall -Wextra -ffreestanding -fno-pie ^
+    -fno-stack-protector -mno-sse -mno-sse2 ^
+    -mno-mmx -msoft-float ^
+    -c 3dsoftware.c -Oz -o 3dsoftware.o
+if errorlevel 1 exit /b 1
+
 echo [+] Linking kernel ^& modules...
 
 ld -m elf_i386 -T kernel.ld ^
@@ -90,6 +97,7 @@ ld -m elf_i386 -T kernel.ld ^
     pit.o ^
     speaker.o ^
     graphics.o ^
+    3dsoftware.o ^
     -o kernel.elf
 if errorlevel 1 exit /b 1
 
@@ -110,7 +118,7 @@ echo [+] Running QEMU...
 
 qemu-system-i386 -m 16M ^
     -drive format=raw,file=nyteos.img ^
-    -rtc base=localtime ^
+    -rtc base=localtime,clock=host ^
     -audiodev sdl,id=audio0 ^
     -machine pcspk-audiodev=audio0 ^
     -serial stdio ^

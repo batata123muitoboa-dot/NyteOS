@@ -122,6 +122,9 @@ def main():
     if os.path.exists("wallpaper2.bmp"):
         files.append(("wallpaper2.bmp", 0))
 
+    if os.path.exists("3d.bmp"):
+        files.append(("3d.bmp", 0))
+
     # --------------------------------------------------------
     # Allocate files
     # --------------------------------------------------------

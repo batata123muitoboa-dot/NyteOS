@@ -30,6 +30,25 @@ extern int ata_read_sector(unsigned int lba, unsigned char *buffer);
 extern void cmd_write(const char *name);
 extern void cmd_edit(const char *name);
 
+extern void software3d_draw_content(int x, int y, int w, int h);
+
+extern void software3d_mouse_down(
+    int win_x, int win_y,
+    int mouse_x, int mouse_y,
+    int win_w, int win_h
+);
+
+extern int software3d_mouse_move(
+    int mouse_x, int mouse_y, int left_pressed
+);
+
+extern void software3d_mouse_up(void);
+
+extern int software3d_open(void);
+extern void software3d_close(void);
+
+extern unsigned int software3d_get_memory_kb(void);
+
 static int WIDTH = 800;
 static int HEIGHT = 600;
 
@@ -972,7 +991,8 @@ static void draw_bmp_icon(
 #define WINDOW_TERM      1
 #define WINDOW_SETTINGS  2
 #define WINDOW_CALC      3
-#define WINDOW_COUNT     4
+#define WINDOW_3D        4
+#define WINDOW_COUNT     5
 
 typedef struct {
     int x;
@@ -1003,14 +1023,16 @@ static Window windows[WINDOW_COUNT] = {
     { 90, 170, 300, 230, "Files", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
     { 270, 150, 430, 260, "Terminal", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
     { 180, 120, 440, 330, "Settings", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
-    { 200, 150, 195, 265, "Calculator", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }
+    { 200, 150, 195, 265, "Calculator", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+    { 140, 65, 520, 420, "NyteOS 3D Renderer", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }
 };
 
 static int window_z[WINDOW_COUNT] = {
     WINDOW_FILES,
     WINDOW_TERM,
     WINDOW_SETTINGS,
-    WINDOW_CALC
+    WINDOW_CALC,
+    WINDOW_3D
 };
 
 static int active_window = -1;
@@ -1800,7 +1822,10 @@ static void shell_cmd_status(void)
     int ssd_pct = (total_ssd_kb > 0) ? (used_ssd_kb * 100) / total_ssd_kb : 0;
 
     unsigned int graphics_ram_kb = (800 * 600 * 4 * 2) / 1024;
-    unsigned int used_ram_kb = get_used_ram_kb() + graphics_ram_kb;
+    unsigned int used_ram_kb =
+        get_used_ram_kb() +
+        graphics_ram_kb +
+        software3d_get_memory_kb();
 
     unsigned int total_ram_kb = get_total_ram_kb();
     if (total_ram_kb == 0) total_ram_kb = 640;
@@ -1969,7 +1994,7 @@ static void term_execute_command(
 
     else if (term_strcmp(command, "about") == 0)
     {
-        shell_print("NyteOS v0.5", WHITE);
+        shell_print("NyteOS v0.5.1", WHITE);
         shell_print(
             "32-bit Operating System.",
             WHITE
@@ -1983,7 +2008,7 @@ static void term_execute_command(
     else if (term_strcmp(command, "version") == 0)
     {
         shell_print(
-            "NyteOS v0.5",
+            "NyteOS v0.5.1",
             WHITE
         );
     }
@@ -2517,8 +2542,15 @@ static void window_raise(int index)
 
 static void window_open(int index)
 {
+
     if (index < 0 || index >= WINDOW_COUNT)
         return;
+
+    if (index == WINDOW_3D)
+    {
+        if (!software3d_open())
+            return;
+    }
 
     windows[index].open = 1;
     windows[index].dragging = 0;
@@ -2531,6 +2563,9 @@ static void window_close(int index)
 {
     if (index < 0 || index >= WINDOW_COUNT)
         return;
+
+    if (index == WINDOW_3D)
+        software3d_close();
 
     windows[index].open = 0;
     windows[index].active = 0;
@@ -2793,6 +2828,21 @@ static void window_manager_mouse_down(void)
             desktop_draw();
             return;
         }
+
+        if (index == WINDOW_3D)
+{
+    software3d_mouse_down(
+        win->x,
+        win->y,
+        mouse_x,
+        mouse_y,
+        win->w,
+        win->h
+    );
+
+    desktop_draw();
+    return;
+}
 
         if (files_context_menu)
         {
@@ -3127,6 +3177,7 @@ static void window_manager_mouse_up(void)
     }
 
     files_editor_dragging = 0;
+    software3d_mouse_up();
 }
 
 
@@ -3887,7 +3938,7 @@ static void draw_settings(void)
         draw_string(
             win->x + 20,
             win->y + 185,
-            "Version 0.5",
+            "Version 0.5.1",
             WHITE,
             FONT_DEFAULT
         );
@@ -3935,22 +3986,71 @@ static int clock_last_minute = -1;
 static void draw_clock(void)
 {
     rtc_time_t now;
-
     rtc_get_time(&now);
 
-    char clock[6];
+    static const char *months[] = {
+        "January", "February", "March",
+        "April", "May", "June",
+        "July", "August", "September",
+        "October", "November", "December"
+    };
 
-    clock[0] = '0' + (now.hour / 10);
-    clock[1] = '0' + (now.hour % 10);
+    char clock[6];
+    char date[40];
+
+    clock[0] = '0' + now.hour / 10;
+    clock[1] = '0' + now.hour % 10;
     clock[2] = ':';
-    clock[3] = '0' + (now.minute / 10);
-    clock[4] = '0' + (now.minute % 10);
+    clock[3] = '0' + now.minute / 10;
+    clock[4] = '0' + now.minute % 10;
     clock[5] = '\0';
+
+    int pos = 0;
+
+    if (now.month >= 1 && now.month <= 12) {
+        const char *month = months[now.month - 1];
+
+        while (*month)
+            date[pos++] = *month++;
+
+        date[pos++] = ' ';
+
+        if (now.day >= 10)
+            date[pos++] = '0' + now.day / 10;
+
+        date[pos++] = '0' + now.day % 10;
+        date[pos++] = ',';
+        date[pos++] = ' ';
+
+        uint16_t divisor = 10000;
+
+        while (divisor > 1 && now.year / divisor == 0)
+            divisor /= 10;
+
+        while (divisor > 0) {
+            date[pos++] = '0' + (now.year / divisor) % 10;
+            divisor /= 10;
+        }
+
+        date[pos] = '\0';
+    } else {
+        date[0] = '\0';
+    }
+
+    int date_width = pos * 7;
 
     draw_string(
         WIDTH - 54,
-        HEIGHT - 25,
+        HEIGHT - 30,
         clock,
+        WHITE,
+        FONT_DEFAULT
+    );
+
+    draw_string(
+        WIDTH - date_width - 8,
+        HEIGHT - 17,
+        date,
         WHITE,
         FONT_DEFAULT
     );
@@ -3999,7 +4099,8 @@ static void draw_taskbar(void)
         "files.bmp",
         "term.bmp",
         "settings.bmp",
-        "calc.bmp"
+        "calc.bmp",
+        "3d.bmp"
     };
 
     int total_width = WINDOW_COUNT * 42 - 6;
@@ -4058,7 +4159,28 @@ for (int z = 0; z < WINDOW_COUNT; z++)
 
     if (i == WINDOW_CALC)
         draw_calculator();
+
+    if (i == WINDOW_3D)
+    {
+        Window *win = &windows[WINDOW_3D];
+
+        draw_window(
+            win->x,
+            win->y,
+            win->w,
+            win->h,
+            win->title,
+            win->active
+        );
+
+        software3d_draw_content(
+            win->x,
+            win->y,
+            win->w,
+            win->h
+        );
     }
+}
 
 if (files_editor_open)
 {
@@ -4373,6 +4495,13 @@ void shell_ui(void)
         }
 
         mouse_poll();
+
+        if (windows[WINDOW_3D].open &&
+            !windows[WINDOW_3D].minimized &&
+            software3d_mouse_move(mouse_x, mouse_y, mouse_left))
+        {
+            desktop_draw();
+        }
 
         rtc_time_t rtc_now;
         rtc_get_time(&rtc_now);
