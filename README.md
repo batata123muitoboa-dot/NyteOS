@@ -13,13 +13,13 @@ A lightweight Operating System made from scratch using Assembly and C. (beta/exp
 ### Minimum
 - CPU: Pentium 4 2.8 GHz
 - RAM: 5 MB DDR
-- GPU: Intel GMA 950
+- GPU: no drivers yet :(
 - Storage: 256 KB
 
 ### Recommended
 - CPU: Intel Core 2 Duo E8400 or better
 - RAM: 16 MB DDR2 or more/better
-- GPU: Intel GMA X4500 or better
+- GPU: no drivers yet :(
 - Storage: 512 KB or more
 
 ### Architecture
