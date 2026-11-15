@@ -1,0 +1,42 @@
+# NyteOS
+A lightweight Operating System made from scratch using Assembly and C. (beta/experimental)
+
+<img src="screenshots/nyteos.png" alt="logo" width="250">
+
+## Screenshots
+<img src="screenshots/screenshot1.png" alt="screenshot 1" width="600">
+
+<img src="screenshots/screenshot2.png" alt="screenshot 1" width="600">
+
+## Hardware Requirements
+
+### Minimum
+- CPU: Pentium 4 2.8 GHz
+- RAM: 5 MB DDR
+- GPU: no drivers yet :(
+- Storage: 4 MiB (minimum; installer requires a disk at least as large as the live image)
+
+### Recommended
+- CPU: Intel Core 2 Duo E8400 or better
+- RAM: 16 MB DDR2 or more/better
+- GPU: no drivers yet :(
+- Storage: 8 MiB or more
+
+### Architecture
+- x86 (32-bit)
+
+## Installation
+### Linux
+```bash
+curl -fsSL https://raw.githubusercontent.com/batata123muitoboa-dot/NyteOS/main/install.sh | bash
+```
+
+### Windows (cmd)
+```cmd
+curl -fsSL https://raw.githubusercontent.com/batata123muitoboa-dot/NyteOS/main/install.bat | cmd
+```
+
+### Windows (powershell)
+```powershell
+curl.exe -fsSL https://raw.githubusercontent.com/batata123muitoboa-dot/NyteOS/main/install.bat | cmd
+```

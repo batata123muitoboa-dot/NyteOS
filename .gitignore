@@ -1,0 +1,13 @@
+# Build outputs
+*.o
+*.elf
+*.bin
+/AGENTS.md
+/boot.bin
+/stage2.bin
+/kernel.bin
+
+# Generated QEMU disk images and logs
+/nyteos.img
+/target.img
+/qemu.log
