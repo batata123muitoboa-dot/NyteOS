@@ -6,7 +6,7 @@ A lightweight Operating System made from scratch using Assembly and C. (beta/exp
 ## Screenshots
 <img src="screenshots/screenshot1.png" alt="screenshot 1" width="600">
 
-<img src="screenshots/screenshot2.png" alt="screenshot 1" width="600">
+<img src="screenshots/screenshot2.png" alt="screenshot 2" width="600">
 
 ## Hardware Requirements
 
